@@ -165,7 +165,7 @@ def _train_impl(replica_id, model, dataset, args, params):
 
 
 def train(args, params):
-  dataset = dataset_from_path(args.data_dirs, params)
+  dataset = dataset_from_path(args.data_dirs, args.spec_dir, params)
   model = WaveGrad(params).cuda()
   _train_impl(0, model, dataset, args, params)
 
@@ -179,4 +179,4 @@ def train_distributed(replica_id, replica_count, port, args, params):
   torch.cuda.set_device(device)
   model = WaveGrad(params).to(device)
   model = DistributedDataParallel(model, device_ids=[replica_id])
-  _train_impl(replica_id, model, dataset_from_path(args.data_dirs, params, is_distributed=True), args, params)
+  _train_impl(replica_id, model, dataset_from_path(args.data_dirs, args.spec_dir, params, is_distributed=True), args, params)

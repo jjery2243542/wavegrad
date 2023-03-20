@@ -24,9 +24,10 @@ from torch.utils.data.distributed import DistributedSampler
 
 
 class NumpyDataset(torch.utils.data.Dataset):
-  def __init__(self, paths):
+  def __init__(self, paths, spec_dir):
     super().__init__()
     self.filenames = []
+    self.spec_dir = spec_dir
     for path in paths:
       self.filenames += glob(f'{path}/**/*.wav', recursive=True)
 
@@ -35,7 +36,8 @@ class NumpyDataset(torch.utils.data.Dataset):
 
   def __getitem__(self, idx):
     audio_filename = self.filenames[idx]
-    spec_filename = f'{audio_filename}.spec.npy'
+    spec_filename = os.path.join(self.spec_dir, "/".join(audio_filename.split("/")[-2:]).replace(".wav", ".spec.npy")) 
+    #spec_filename = f'{audio_filename}.spec.npy'
     signal, _ = torchaudio.load(audio_filename)
     spectrogram = np.load(spec_filename)
     return {
@@ -74,8 +76,8 @@ class Collator:
     }
 
 
-def from_path(data_dirs, params, is_distributed=False):
-  dataset = NumpyDataset(data_dirs)
+def from_path(data_dirs, spec_dir, params, is_distributed=False):
+  dataset = NumpyDataset(data_dirs, spec_dir)
   return torch.utils.data.DataLoader(
       dataset,
       batch_size=params.batch_size,
