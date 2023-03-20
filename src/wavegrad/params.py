@@ -38,6 +38,7 @@ params = AttrDict(
     # Training params
     batch_size=32,
     learning_rate=2e-4,
+    min_lr=2e-6,
     max_grad_norm=1.0,
 
     # Data params

@@ -20,6 +20,7 @@ import torch.nn as nn
 
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
 from wavegrad.dataset import from_path as dataset_from_path
@@ -157,6 +158,7 @@ class WaveGradLearner:
 def _train_impl(replica_id, model, dataset, args, params):
   torch.backends.cudnn.benchmark = True
   opt = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+  scheduler = CosineAnnealingLR(opt, T_max=args.max_steps, eta_min=params.min_lr) 
 
   learner = WaveGradLearner(args.model_dir, model, dataset, opt, params, fp16=args.fp16)
   learner.is_master = (replica_id == 0)
