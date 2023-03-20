@@ -38,12 +38,13 @@ def _nested_map(struct, map_fn):
 
 
 class WaveGradLearner:
-  def __init__(self, model_dir, model, dataset, optimizer, params, *args, **kwargs):
+  def __init__(self, model_dir, model, dataset, optimizer, scheduler, params, *args, **kwargs):
     os.makedirs(model_dir, exist_ok=True)
     self.model_dir = model_dir
     self.model = model
     self.dataset = dataset
     self.optimizer = optimizer
+    self.scheduler = scheduler
     self.params = params
     self.autocast = torch.cuda.amp.autocast(enabled=kwargs.get('fp16', False))
     self.scaler = torch.cuda.amp.GradScaler(enabled=kwargs.get('fp16', False))
@@ -66,6 +67,7 @@ class WaveGradLearner:
         'step': self.step,
         'model': { k: v.cpu() if isinstance(v, torch.Tensor) else v for k, v in model_state.items() },
         'optimizer': { k: v.cpu() if isinstance(v, torch.Tensor) else v for k, v in self.optimizer.state_dict().items() },
+        'scheduler': self.scheduler.state_dict(), 
         'params': dict(self.params),
         'scaler': self.scaler.state_dict(),
     }
@@ -76,6 +78,7 @@ class WaveGradLearner:
     else:
       self.model.load_state_dict(state_dict['model'])
     self.optimizer.load_state_dict(state_dict['optimizer'])
+    self.scheduler.load_state_dict(state_dict["scheduler"])
     self.scaler.load_state_dict(state_dict['scaler'])
     self.step = state_dict['step']
 
@@ -144,6 +147,7 @@ class WaveGradLearner:
     self.grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.params.max_grad_norm)
     self.scaler.step(self.optimizer)
     self.scaler.update()
+    self.scheduler.step()
     return loss
 
   def _write_summary(self, step, features, loss):
@@ -151,6 +155,7 @@ class WaveGradLearner:
     writer.add_audio('audio/reference', features['audio'][0], step, sample_rate=self.params.sample_rate)
     writer.add_scalar('train/loss', loss, step)
     writer.add_scalar('train/grad_norm', self.grad_norm, step)
+    writer.add_scalar('train/lr', self.scheduler.get_last_lr()[0], step)
     writer.flush()
     self.summary_writer = writer
 
@@ -160,7 +165,7 @@ def _train_impl(replica_id, model, dataset, args, params):
   opt = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
   scheduler = CosineAnnealingLR(opt, T_max=args.max_steps, eta_min=params.min_lr) 
 
-  learner = WaveGradLearner(args.model_dir, model, dataset, opt, params, fp16=args.fp16)
+  learner = WaveGradLearner(args.model_dir, model, dataset, opt, scheduler, params, fp16=args.fp16)
   learner.is_master = (replica_id == 0)
   learner.restore_from_checkpoint()
   learner.train(max_steps=args.max_steps)
