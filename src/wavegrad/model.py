@@ -100,12 +100,17 @@ class UBlock(nn.Module):
     ])
 
   def forward(self, x, film_shift, film_scale):
+    print("start block")
+    print(x.shape)
     block1 = F.interpolate(x, size=x.shape[-1] * self.factor)
+    print(block1.shape)
     block1 = self.block1(block1)
+    print(block1.shape)
 
     block2 = F.leaky_relu(x, 0.2)
     block2 = F.interpolate(block2, size=x.shape[-1] * self.factor)
     block2 = self.block2[0](block2)
+    print(film_shift.shape, film_scale.shape, block2.shape)
     block2 = film_shift + film_scale * block2
     block2 = F.leaky_relu(block2, 0.2)
     block2 = self.block2[1](block2)
@@ -167,23 +172,28 @@ class WaveGrad(nn.Module):
         FiLM(512, 512),
     ])
     self.upsample = nn.ModuleList([
-        UBlock(768, 512, 5, [1, 2, 1, 2]),
+        UBlock(1024, 512, 5, [1, 2, 1, 2]),
         UBlock(512, 512, 5, [1, 2, 1, 2]),
         UBlock(512, 256, 3, [1, 2, 4, 8]),
         UBlock(256, 128, 2, [1, 2, 4, 8]),
         UBlock(128, 128, 2, [1, 2, 4, 8]),
     ])
-    self.first_conv = Conv1d(128, 768, 3, padding=1)
+    self.first_conv = Conv1d(1024, 1024, 1)
     self.last_conv = Conv1d(128, 1, 3, padding=1)
 
   def forward(self, audio, spectrogram, noise_scale):
     x = audio.unsqueeze(1)
+    print(x.shape)
     downsampled = []
     for film, layer in zip(self.film, self.downsample):
       x = layer(x)
+      print(x.shape)
       downsampled.append(film(x, noise_scale))
 
+    print("end")
+    print(spectrogram.shape)
     x = self.first_conv(spectrogram)
+    print(x.shape)
     for layer, (film_shift, film_scale) in zip(self.upsample, reversed(downsampled)):
       x = layer(x, film_shift, film_scale)
     x = self.last_conv(x)

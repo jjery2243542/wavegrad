@@ -43,7 +43,7 @@ params = AttrDict(
 
     # Data params
     sample_rate=16000,
-    hop_samples=300,  # Don't change this. Really.
+    hop_samples=640,  # Don't change this. Really.
     crop_mel_frames=24,
 
     # Model params

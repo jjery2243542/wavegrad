@@ -36,13 +36,14 @@ class NumpyDataset(torch.utils.data.Dataset):
 
   def __getitem__(self, idx):
     audio_filename = self.filenames[idx]
-    spec_filename = os.path.join(self.spec_dir, "/".join(audio_filename.split("/")[-2:]).replace(".wav", ".spec.npy")) 
+    spec_filename = os.path.join(self.spec_dir, "/".join(audio_filename.split("/")[-2:]).replace(".wav", ".npy")) 
     #spec_filename = f'{audio_filename}.spec.npy'
     signal, _ = torchaudio.load(audio_filename)
     spectrogram = np.load(spec_filename)
     return {
+        'filename': self.filenames[idx], 
         'audio': signal[0],
-        'spectrogram': spectrogram.T
+        'spectrogram': spectrogram,
     }
 
 
