@@ -103,6 +103,15 @@ class WaveGradLearner:
     except FileNotFoundError:
       return False
 
+  def valid(self):
+    device = next(self.model.parameters()).device
+    while True:
+      for features in tqdm(self.dataset, desc=f'Epoch {self.step // len(self.dataset)}') if self.is_master else self.dataset:
+        if max_steps is not None and self.step >= max_steps:
+          return
+        features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
+        loss = self.valid_step(features)
+
   def train(self, max_steps=None):
     device = next(self.model.parameters()).device
     while True:
@@ -114,11 +123,35 @@ class WaveGradLearner:
         if torch.isnan(loss).any():
           raise RuntimeError(f'Detected NaN loss at step {self.step}.')
         if self.is_master:
-          if self.step % 100 == 0:
-            self._write_summary(self.step, features, loss)
-          if self.step % len(self.dataset) == 0:
+          if self.step % 10000 == 0:
+            self._write_summary(self.step, features, loss, subset="train")
+          if self.step % 10000 == 0:
             self.save_to_checkpoint()
         self.step += 1
+
+  def valid_step(self, features):
+    for param in self.model.parameters():
+      param.grad = None
+
+    audio = features['audio']
+    spectrogram = features['spectrogram']
+
+    N, T = audio.shape
+    S = 1000
+    device = audio.device
+    self.noise_level = self.noise_level.to(device)
+
+    with self.autocast:
+      s = torch.randint(1, S + 1, [N], device=audio.device)
+      l_a, l_b = self.noise_level[s-1], self.noise_level[s]
+      noise_scale = l_a + torch.rand(N, device=audio.device) * (l_b - l_a)
+      noise_scale = noise_scale.unsqueeze(1)
+      noise = torch.randn_like(audio)
+      noisy_audio = noise_scale * audio + (1.0 - noise_scale**2)**0.5 * noise
+
+      predicted = self.model(noisy_audio, spectrogram, noise_scale.squeeze(1))
+      loss = self.loss_fn(noise, predicted.squeeze(1))
+    return loss
 
   def train_step(self, features):
     for param in self.model.parameters():
@@ -151,12 +184,12 @@ class WaveGradLearner:
     self.scheduler.step()
     return loss
 
-  def _write_summary(self, step, features, loss):
+  def _write_summary(self, step, features, loss, subset="train"):
     writer = self.summary_writer or SummaryWriter(self.model_dir, purge_step=step)
     writer.add_audio('audio/reference', features['audio'][0], step, sample_rate=self.params.sample_rate)
-    writer.add_scalar('train/loss', loss, step)
-    writer.add_scalar('train/grad_norm', self.grad_norm, step)
-    writer.add_scalar('train/lr', self.scheduler.get_last_lr()[0], step)
+    writer.add_scalar(f'{subset}/loss', loss, step)
+    writer.add_scalar(f'{subset}/grad_norm', self.grad_norm, step)
+    writer.add_scalar(f'{subset}/lr', self.scheduler.get_last_lr()[0], step)
     writer.flush()
     self.summary_writer = writer
 
