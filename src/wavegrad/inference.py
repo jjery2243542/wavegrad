@@ -66,7 +66,7 @@ def predict(spectrogram, model_dir=None, params=None, device=torch.device('cuda'
 
 
 def main(args):
-  spectrogram = torch.from_numpy(np.load(args.spectrogram_path))
+  spectrogram = torch.from_numpy(np.load(args.spectrogram_path)).T
   params = {}
   if args.noise_schedule:
     params['noise_schedule'] = torch.from_numpy(np.load(args.noise_schedule))

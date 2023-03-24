@@ -24,6 +24,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
 from wavegrad.dataset import from_path as dataset_from_path
+from wavegrad.dataset import from_file_lists as dataset_from_lists
 from wavegrad.model import WaveGrad
 
 
@@ -172,9 +173,9 @@ def _train_impl(replica_id, model, dataset, args, params):
 
 
 def train(args, params):
-  dataset = dataset_from_path(args.data_dirs, args.spec_dir, params)
+  data_loader = dataset_from_lists(args.wav_files, args.npy_files, params)
   model = WaveGrad(params).cuda()
-  _train_impl(0, model, dataset, args, params)
+  _train_impl(0, model, data_loader, args, params)
 
 
 def train_distributed(replica_id, replica_count, port, args, params):
@@ -186,4 +187,5 @@ def train_distributed(replica_id, replica_count, port, args, params):
   torch.cuda.set_device(device)
   model = WaveGrad(params).to(device)
   model = DistributedDataParallel(model, device_ids=[replica_id])
-  _train_impl(replica_id, model, dataset_from_path(args.data_dirs, args.spec_dir, params, is_distributed=True), args, params)
+  data_loader = dataset_from_lists(args.wav_files, args.npy_files, params, is_distributed=True)
+  _train_impl(replica_id, model, data_loader, args, params)

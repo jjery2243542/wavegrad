@@ -22,6 +22,30 @@ import torchaudio
 from glob import glob
 from torch.utils.data.distributed import DistributedSampler
 
+class NumpyFileDataset(torch.utils.data.Dataset):
+  def __init__(self, wav_file_lists, npy_file_lists):
+    super().__init__()
+
+    self.wav_npy_pairs = []
+    for wav_file_list, npy_file_list in zip(wav_file_lists, npy_file_lists):
+        with open(wav_file_list) as f_wav, open(npy_file_list) as f_npy:
+            for wav_line, npy_line in zip(f_wav, f_npy):
+                self.wav_npy_pairs.append((wav_line.strip(), npy_line.strip()))
+
+  def __len__(self):
+    return len(self.wav_npy_pairs)
+
+  def __getitem__(self, idx):
+    audio_filename = self.wav_npy_pairs[idx][0]
+    spec_filename = self.wav_npy_pairs[idx][1]
+    signal, _ = torchaudio.load(audio_filename)
+    spectrogram = np.load(spec_filename)
+    return {
+        'filename': audio_filename, 
+        'audio': signal[0],
+        'spectrogram': spectrogram,
+    }
+
 
 class NumpyDataset(torch.utils.data.Dataset):
   def __init__(self, paths, spec_dir):
@@ -76,6 +100,17 @@ class Collator:
         'spectrogram': torch.from_numpy(spectrogram),
     }
 
+def from_file_lists(wav_file_lists, npy_file_lists, params, is_distributed=False):
+  dataset = NumpyFileDataset(wav_file_lists, npy_file_lists)
+  return torch.utils.data.DataLoader(
+      dataset,
+      batch_size=params.batch_size,
+      collate_fn=Collator(params).collate,
+      shuffle=not is_distributed,
+      sampler=DistributedSampler(dataset) if is_distributed else None,
+      pin_memory=True,
+      drop_last=True,
+      num_workers=os.cpu_count())
 
 def from_path(data_dirs, spec_dir, params, is_distributed=False):
   dataset = NumpyDataset(data_dirs, spec_dir)
