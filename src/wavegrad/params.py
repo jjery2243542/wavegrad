@@ -17,21 +17,21 @@ import numpy as np
 
 
 class AttrDict(dict):
-  def __init__(self, *args, **kwargs):
-      super(AttrDict, self).__init__(*args, **kwargs)
-      self.__dict__ = self
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__ = self
 
-  def override(self, attrs):
-    if isinstance(attrs, dict):
-      self.__dict__.update(**attrs)
-    elif isinstance(attrs, (list, tuple, set)):
-      for attr in attrs:
-        self.override(attr)
-    elif attrs is None:
-      pass
-    else:
-      raise NotImplementedError
-    return self
+    def override(self, attrs):
+        if isinstance(attrs, dict):
+            self.__dict__.update(**attrs)
+        elif isinstance(attrs, (list, tuple, set)):
+            for attr in attrs:
+                self.override(attr)
+        elif attrs is None:
+            pass
+        else:
+            raise NotImplementedError
+        return self
 
 
 params = AttrDict(
@@ -48,4 +48,5 @@ params = AttrDict(
 
     # Model params
     noise_schedule=np.linspace(1e-6, 0.01, 1000).tolist(),
+    model_size="base",
 )

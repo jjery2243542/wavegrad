@@ -29,196 +29,196 @@ from wavegrad.model import WaveGrad
 
 
 def _nested_map(struct, map_fn):
-  if isinstance(struct, tuple):
-    return tuple(_nested_map(x, map_fn) for x in struct)
-  if isinstance(struct, list):
-    return [_nested_map(x, map_fn) for x in struct]
-  if isinstance(struct, dict):
-    return { k: _nested_map(v, map_fn) for k, v in struct.items() }
-  return map_fn(struct)
+    if isinstance(struct, tuple):
+        return tuple(_nested_map(x, map_fn) for x in struct)
+    if isinstance(struct, list):
+        return [_nested_map(x, map_fn) for x in struct]
+    if isinstance(struct, dict):
+        return { k: _nested_map(v, map_fn) for k, v in struct.items() }
+    return map_fn(struct)
 
 
 class WaveGradLearner:
-  def __init__(self, model_dir, model, dataset, optimizer, scheduler, params, *args, **kwargs):
-    os.makedirs(model_dir, exist_ok=True)
-    self.model_dir = model_dir
-    self.model = model
-    self.dataset = dataset
-    self.optimizer = optimizer
-    self.scheduler = scheduler
-    self.params = params
-    self.autocast = torch.cuda.amp.autocast(enabled=kwargs.get('fp16', False))
-    self.scaler = torch.cuda.amp.GradScaler(enabled=kwargs.get('fp16', False))
-    self.step = 0
-    self.is_master = True
+    def __init__(self, model_dir, model, dataset, optimizer, scheduler, params, *args, **kwargs):
+        os.makedirs(model_dir, exist_ok=True)
+        self.model_dir = model_dir
+        self.model = model
+        self.dataset = dataset
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.params = params
+        self.autocast = torch.cuda.amp.autocast(enabled=kwargs.get('fp16', False))
+        self.scaler = torch.cuda.amp.GradScaler(enabled=kwargs.get('fp16', False))
+        self.step = 0
+        self.is_master = True
 
-    beta = np.array(self.params.noise_schedule)
-    noise_level = np.cumprod(1 - beta)**0.5
-    noise_level = np.concatenate([[1.0], noise_level], axis=0)
-    self.noise_level = torch.tensor(noise_level.astype(np.float32))
-    self.loss_fn = nn.L1Loss()
-    self.summary_writer = None
+        beta = np.array(self.params.noise_schedule)
+        noise_level = np.cumprod(1 - beta)**0.5
+        noise_level = np.concatenate([[1.0], noise_level], axis=0)
+        self.noise_level = torch.tensor(noise_level.astype(np.float32))
+        self.loss_fn = nn.L1Loss()
+        self.summary_writer = None
 
-  def state_dict(self):
-    if hasattr(self.model, 'module') and isinstance(self.model.module, nn.Module):
-      model_state = self.model.module.state_dict()
-    else:
-      model_state = self.model.state_dict()
-    return {
-        'step': self.step,
-        'model': { k: v.cpu() if isinstance(v, torch.Tensor) else v for k, v in model_state.items() },
-        'optimizer': { k: v.cpu() if isinstance(v, torch.Tensor) else v for k, v in self.optimizer.state_dict().items() },
-        'scheduler': self.scheduler.state_dict(), 
-        'params': dict(self.params),
-        'scaler': self.scaler.state_dict(),
-    }
+    def state_dict(self):
+        if hasattr(self.model, 'module') and isinstance(self.model.module, nn.Module):
+            model_state = self.model.module.state_dict()
+        else:
+            model_state = self.model.state_dict()
+        return {
+            'step': self.step,
+            'model': { k: v.cpu() if isinstance(v, torch.Tensor) else v for k, v in model_state.items() },
+            'optimizer': { k: v.cpu() if isinstance(v, torch.Tensor) else v for k, v in self.optimizer.state_dict().items() },
+            'scheduler': self.scheduler.state_dict(),
+            'params': dict(self.params),
+            'scaler': self.scaler.state_dict(),
+        }
 
-  def load_state_dict(self, state_dict):
-    if hasattr(self.model, 'module') and isinstance(self.model.module, nn.Module):
-      self.model.module.load_state_dict(state_dict['model'])
-    else:
-      self.model.load_state_dict(state_dict['model'])
-    self.optimizer.load_state_dict(state_dict['optimizer'])
-    self.scheduler.load_state_dict(state_dict["scheduler"])
-    self.scaler.load_state_dict(state_dict['scaler'])
-    self.step = state_dict['step']
+    def load_state_dict(self, state_dict):
+        if hasattr(self.model, 'module') and isinstance(self.model.module, nn.Module):
+            self.model.module.load_state_dict(state_dict['model'])
+        else:
+            self.model.load_state_dict(state_dict['model'])
+        self.optimizer.load_state_dict(state_dict['optimizer'])
+        self.scheduler.load_state_dict(state_dict["scheduler"])
+        self.scaler.load_state_dict(state_dict['scaler'])
+        self.step = state_dict['step']
 
-  def save_to_checkpoint(self, filename='weights'):
-    save_basename = f'{filename}-{self.step}.pt'
-    save_name = f'{self.model_dir}/{save_basename}'
-    link_name = f'{self.model_dir}/{filename}.pt'
-    torch.save(self.state_dict(), save_name)
-    if os.name == 'nt':
-      torch.save(self.state_dict(), link_name)
-    else:
-      if os.path.islink(link_name):
-        os.unlink(link_name)
-      os.symlink(save_basename, link_name)
+    def save_to_checkpoint(self, filename='weights'):
+        save_basename = f'{filename}-{self.step}.pt'
+        save_name = f'{self.model_dir}/{save_basename}'
+        link_name = f'{self.model_dir}/{filename}.pt'
+        torch.save(self.state_dict(), save_name)
+        if os.name == 'nt':
+            torch.save(self.state_dict(), link_name)
+        else:
+            if os.path.islink(link_name):
+                os.unlink(link_name)
+            os.symlink(save_basename, link_name)
 
-  def restore_from_checkpoint(self, filename='weights'):
-    try:
-      checkpoint = torch.load(f'{self.model_dir}/{filename}.pt')
-      self.load_state_dict(checkpoint)
-      return True
-    except FileNotFoundError:
-      return False
+    def restore_from_checkpoint(self, filename='weights'):
+        try:
+            checkpoint = torch.load(f'{self.model_dir}/{filename}.pt')
+            self.load_state_dict(checkpoint)
+            return True
+        except FileNotFoundError:
+            return False
 
-  def valid(self):
-    device = next(self.model.parameters()).device
-    while True:
-      for features in tqdm(self.dataset, desc=f'Epoch {self.step // len(self.dataset)}') if self.is_master else self.dataset:
-        if max_steps is not None and self.step >= max_steps:
-          return
-        features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
-        loss = self.valid_step(features)
+    def valid(self):
+        device = next(self.model.parameters()).device
+        while True:
+            for features in tqdm(self.dataset, desc=f'Epoch {self.step // len(self.dataset)}') if self.is_master else self.dataset:
+                if max_steps is not None and self.step >= max_steps:
+                    return
+                features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
+                loss = self.valid_step(features)
 
-  def train(self, max_steps=None):
-    device = next(self.model.parameters()).device
-    while True:
-      for features in tqdm(self.dataset, desc=f'Epoch {self.step // len(self.dataset)}') if self.is_master else self.dataset:
-        if max_steps is not None and self.step >= max_steps:
-          return
-        features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
-        loss = self.train_step(features)
-        if torch.isnan(loss).any():
-          raise RuntimeError(f'Detected NaN loss at step {self.step}.')
-        if self.is_master:
-          if self.step % 10000 == 0:
-            self._write_summary(self.step, features, loss, subset="train")
-          if self.step % 10000 == 0:
-            self.save_to_checkpoint()
-        self.step += 1
+    def train(self, max_steps=None):
+        device = next(self.model.parameters()).device
+        while True:
+            for features in tqdm(self.dataset, desc=f'Epoch {self.step // len(self.dataset)}') if self.is_master else self.dataset:
+                if max_steps is not None and self.step >= max_steps:
+                    return
+                features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
+                loss = self.train_step(features)
+                if torch.isnan(loss).any():
+                    raise RuntimeError(f'Detected NaN loss at step {self.step}.')
+                if self.is_master:
+                    if self.step % 10000 == 0:
+                        self._write_summary(self.step, features, loss, subset="train")
+                    if self.step % 10000 == 0:
+                        self.save_to_checkpoint()
+                self.step += 1
 
-  def valid_step(self, features):
-    for param in self.model.parameters():
-      param.grad = None
+    def valid_step(self, features):
+        for param in self.model.parameters():
+            param.grad = None
 
-    audio = features['audio']
-    spectrogram = features['spectrogram']
+        audio = features['audio']
+        spectrogram = features['spectrogram']
 
-    N, T = audio.shape
-    S = 1000
-    device = audio.device
-    self.noise_level = self.noise_level.to(device)
+        N, T = audio.shape
+        S = 1000
+        device = audio.device
+        self.noise_level = self.noise_level.to(device)
 
-    with self.autocast:
-      s = torch.randint(1, S + 1, [N], device=audio.device)
-      l_a, l_b = self.noise_level[s-1], self.noise_level[s]
-      noise_scale = l_a + torch.rand(N, device=audio.device) * (l_b - l_a)
-      noise_scale = noise_scale.unsqueeze(1)
-      noise = torch.randn_like(audio)
-      noisy_audio = noise_scale * audio + (1.0 - noise_scale**2)**0.5 * noise
+        with self.autocast:
+            s = torch.randint(1, S + 1, [N], device=audio.device)
+            l_a, l_b = self.noise_level[s-1], self.noise_level[s]
+            noise_scale = l_a + torch.rand(N, device=audio.device) * (l_b - l_a)
+            noise_scale = noise_scale.unsqueeze(1)
+            noise = torch.randn_like(audio)
+            noisy_audio = noise_scale * audio + (1.0 - noise_scale**2)**0.5 * noise
 
-      predicted = self.model(noisy_audio, spectrogram, noise_scale.squeeze(1))
-      loss = self.loss_fn(noise, predicted.squeeze(1))
-    return loss
+            predicted = self.model(noisy_audio, spectrogram, noise_scale.squeeze(1))
+            loss = self.loss_fn(noise, predicted.squeeze(1))
+        return loss
 
-  def train_step(self, features):
-    for param in self.model.parameters():
-      param.grad = None
+    def train_step(self, features):
+        for param in self.model.parameters():
+            param.grad = None
 
-    audio = features['audio']
-    spectrogram = features['spectrogram']
+        audio = features['audio']
+        spectrogram = features['spectrogram']
 
-    N, T = audio.shape
-    S = 1000
-    device = audio.device
-    self.noise_level = self.noise_level.to(device)
+        N, T = audio.shape
+        S = 1000
+        device = audio.device
+        self.noise_level = self.noise_level.to(device)
 
-    with self.autocast:
-      s = torch.randint(1, S + 1, [N], device=audio.device)
-      l_a, l_b = self.noise_level[s-1], self.noise_level[s]
-      noise_scale = l_a + torch.rand(N, device=audio.device) * (l_b - l_a)
-      noise_scale = noise_scale.unsqueeze(1)
-      noise = torch.randn_like(audio)
-      noisy_audio = noise_scale * audio + (1.0 - noise_scale**2)**0.5 * noise
+        with self.autocast:
+            s = torch.randint(1, S + 1, [N], device=audio.device)
+            l_a, l_b = self.noise_level[s-1], self.noise_level[s]
+            noise_scale = l_a + torch.rand(N, device=audio.device) * (l_b - l_a)
+            noise_scale = noise_scale.unsqueeze(1)
+            noise = torch.randn_like(audio)
+            noisy_audio = noise_scale * audio + (1.0 - noise_scale**2)**0.5 * noise
 
-      predicted = self.model(noisy_audio, spectrogram, noise_scale.squeeze(1))
-      loss = self.loss_fn(noise, predicted.squeeze(1))
+            predicted = self.model(noisy_audio, spectrogram, noise_scale.squeeze(1))
+            loss = self.loss_fn(noise, predicted.squeeze(1))
 
-    self.scaler.scale(loss).backward()
-    self.scaler.unscale_(self.optimizer)
-    self.grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.params.max_grad_norm)
-    self.scaler.step(self.optimizer)
-    self.scaler.update()
-    self.scheduler.step()
-    return loss
+        self.scaler.scale(loss).backward()
+        self.scaler.unscale_(self.optimizer)
+        self.grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.params.max_grad_norm)
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+        self.scheduler.step()
+        return loss
 
-  def _write_summary(self, step, features, loss, subset="train"):
-    writer = self.summary_writer or SummaryWriter(self.model_dir, purge_step=step)
-    writer.add_audio('audio/reference', features['audio'][0], step, sample_rate=self.params.sample_rate)
-    writer.add_scalar(f'{subset}/loss', loss, step)
-    writer.add_scalar(f'{subset}/grad_norm', self.grad_norm, step)
-    writer.add_scalar(f'{subset}/lr', self.scheduler.get_last_lr()[0], step)
-    writer.flush()
-    self.summary_writer = writer
+    def _write_summary(self, step, features, loss, subset="train"):
+        writer = self.summary_writer or SummaryWriter(self.model_dir, purge_step=step)
+        writer.add_audio('audio/reference', features['audio'][0], step, sample_rate=self.params.sample_rate)
+        writer.add_scalar(f'{subset}/loss', loss, step)
+        writer.add_scalar(f'{subset}/grad_norm', self.grad_norm, step)
+        writer.add_scalar(f'{subset}/lr', self.scheduler.get_last_lr()[0], step)
+        writer.flush()
+        self.summary_writer = writer
 
 
 def _train_impl(replica_id, model, dataset, args, params):
-  torch.backends.cudnn.benchmark = True
-  opt = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
-  scheduler = CosineAnnealingLR(opt, T_max=args.max_steps, eta_min=params.min_lr) 
+    torch.backends.cudnn.benchmark = True
+    opt = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+    scheduler = CosineAnnealingLR(opt, T_max=args.max_steps, eta_min=params.min_lr)
 
-  learner = WaveGradLearner(args.model_dir, model, dataset, opt, scheduler, params, fp16=args.fp16)
-  learner.is_master = (replica_id == 0)
-  learner.restore_from_checkpoint()
-  learner.train(max_steps=args.max_steps)
+    learner = WaveGradLearner(args.model_dir, model, dataset, opt, scheduler, params, fp16=args.fp16)
+    learner.is_master = (replica_id == 0)
+    learner.restore_from_checkpoint()
+    learner.train(max_steps=args.max_steps)
 
 
 def train(args, params):
-  data_loader = dataset_from_lists(args.wav_files, args.npy_files, params)
-  model = WaveGrad(params).cuda()
-  _train_impl(0, model, data_loader, args, params)
+    data_loader = dataset_from_lists(args.train_wav_files, args.train_npy_files, params)
+    model = WaveGrad(params).cuda()
+    _train_impl(0, model, data_loader, args, params)
 
 
 def train_distributed(replica_id, replica_count, port, args, params):
-  os.environ['MASTER_ADDR'] = 'localhost'
-  os.environ['MASTER_PORT'] = str(port)
-  torch.distributed.init_process_group('nccl', rank=replica_id, world_size=replica_count)
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = str(port)
+    torch.distributed.init_process_group('nccl', rank=replica_id, world_size=replica_count)
 
-  device = torch.device('cuda', replica_id)
-  torch.cuda.set_device(device)
-  model = WaveGrad(params).to(device)
-  model = DistributedDataParallel(model, device_ids=[replica_id])
-  data_loader = dataset_from_lists(args.wav_files, args.npy_files, params, is_distributed=True)
-  _train_impl(replica_id, model, data_loader, args, params)
+    device = torch.device('cuda', replica_id)
+    torch.cuda.set_device(device)
+    model = WaveGrad(params).to(device)
+    model = DistributedDataParallel(model, device_ids=[replica_id])
+    data_loader = dataset_from_lists(args.wav_files, args.npy_files, params, is_distributed=True)
+    _train_impl(replica_id, model, data_loader, args, params)

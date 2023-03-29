@@ -23,103 +23,103 @@ from glob import glob
 from torch.utils.data.distributed import DistributedSampler
 
 class NumpyFileDataset(torch.utils.data.Dataset):
-  def __init__(self, wav_file_lists, npy_file_lists):
-    super().__init__()
+    def __init__(self, wav_file_lists, npy_file_lists):
+        super().__init__()
 
-    self.wav_npy_pairs = []
-    for wav_file_list, npy_file_list in zip(wav_file_lists, npy_file_lists):
-        with open(wav_file_list) as f_wav, open(npy_file_list) as f_npy:
-            for wav_line, npy_line in zip(f_wav, f_npy):
-                self.wav_npy_pairs.append((wav_line.strip(), npy_line.strip()))
+        self.wav_npy_pairs = []
+        for wav_file_list, npy_file_list in zip(wav_file_lists, npy_file_lists):
+            with open(wav_file_list) as f_wav, open(npy_file_list) as f_npy:
+                for wav_line, npy_line in zip(f_wav, f_npy):
+                    self.wav_npy_pairs.append((wav_line.strip(), npy_line.strip()))
 
-  def __len__(self):
-    return len(self.wav_npy_pairs)
+    def __len__(self):
+        return len(self.wav_npy_pairs)
 
-  def __getitem__(self, idx):
-    audio_filename = self.wav_npy_pairs[idx][0]
-    spec_filename = self.wav_npy_pairs[idx][1]
-    signal, _ = torchaudio.load(audio_filename)
-    spectrogram = np.load(spec_filename)
-    return {
-        'filename': audio_filename, 
-        'audio': signal[0],
-        'spectrogram': spectrogram,
-    }
+    def __getitem__(self, idx):
+        audio_filename = self.wav_npy_pairs[idx][0]
+        spec_filename = self.wav_npy_pairs[idx][1]
+        signal, _ = torchaudio.load(audio_filename)
+        spectrogram = np.load(spec_filename)
+        return {
+            'filename': audio_filename,
+            'audio': signal[0],
+            'spectrogram': spectrogram,
+        }
 
 
 class NumpyDataset(torch.utils.data.Dataset):
-  def __init__(self, paths, spec_dir):
-    super().__init__()
-    self.filenames = []
-    self.spec_dir = spec_dir
-    for path in paths:
-      self.filenames += glob(f'{path}/**/*.wav', recursive=True)
+    def __init__(self, paths, spec_dir):
+        super().__init__()
+        self.filenames = []
+        self.spec_dir = spec_dir
+        for path in paths:
+            self.filenames += glob(f'{path}/**/*.wav', recursive=True)
 
-  def __len__(self):
-    return len(self.filenames)
+    def __len__(self):
+        return len(self.filenames)
 
-  def __getitem__(self, idx):
-    audio_filename = self.filenames[idx]
-    spec_filename = os.path.join(self.spec_dir, "/".join(audio_filename.split("/")[-2:]).replace(".wav", ".npy")) 
-    #spec_filename = f'{audio_filename}.spec.npy'
-    signal, _ = torchaudio.load(audio_filename)
-    spectrogram = np.load(spec_filename)
-    return {
-        'filename': self.filenames[idx], 
-        'audio': signal[0],
-        'spectrogram': spectrogram,
-    }
+    def __getitem__(self, idx):
+        audio_filename = self.filenames[idx]
+        spec_filename = os.path.join(self.spec_dir, "/".join(audio_filename.split("/")[-2:]).replace(".wav", ".npy"))
+        #spec_filename = f'{audio_filename}.spec.npy'
+        signal, _ = torchaudio.load(audio_filename)
+        spectrogram = np.load(spec_filename)
+        return {
+            'filename': self.filenames[idx],
+            'audio': signal[0],
+            'spectrogram': spectrogram,
+        }
 
 
 class Collator:
-  def __init__(self, params):
-    self.params = params
+    def __init__(self, params):
+        self.params = params
 
-  def collate(self, minibatch):
-    samples_per_frame = self.params.hop_samples
-    for record in minibatch:
-      # Filter out records that aren't long enough.
-      if len(record['spectrogram']) < self.params.crop_mel_frames:
-        del record['spectrogram']
-        del record['audio']
-        continue
+    def collate(self, minibatch):
+        samples_per_frame = self.params.hop_samples
+        for record in minibatch:
+            # Filter out records that aren't long enough.
+            if len(record['spectrogram']) < self.params.crop_mel_frames:
+                del record['spectrogram']
+                del record['audio']
+                continue
 
-      start = random.randint(0, record['spectrogram'].shape[0] - self.params.crop_mel_frames)
-      end = start + self.params.crop_mel_frames
-      record['spectrogram'] = record['spectrogram'][start:end].T
+            start = random.randint(0, record['spectrogram'].shape[0] - self.params.crop_mel_frames)
+            end = start + self.params.crop_mel_frames
+            record['spectrogram'] = record['spectrogram'][start:end].T
 
-      start *= samples_per_frame
-      end *= samples_per_frame
-      record['audio'] = record['audio'][start:end]
-      record['audio'] = np.pad(record['audio'], (0, (end-start) - len(record['audio'])), mode='constant')
+            start *= samples_per_frame
+            end *= samples_per_frame
+            record['audio'] = record['audio'][start:end]
+            record['audio'] = np.pad(record['audio'], (0, (end-start) - len(record['audio'])), mode='constant')
 
-    audio = np.stack([record['audio'] for record in minibatch if 'audio' in record])
-    spectrogram = np.stack([record['spectrogram'] for record in minibatch if 'spectrogram' in record])
-    return {
-        'audio': torch.from_numpy(audio),
-        'spectrogram': torch.from_numpy(spectrogram),
-    }
+        audio = np.stack([record['audio'] for record in minibatch if 'audio' in record])
+        spectrogram = np.stack([record['spectrogram'] for record in minibatch if 'spectrogram' in record])
+        return {
+            'audio': torch.from_numpy(audio),
+            'spectrogram': torch.from_numpy(spectrogram),
+        }
 
 def from_file_lists(wav_file_lists, npy_file_lists, params, is_distributed=False):
-  dataset = NumpyFileDataset(wav_file_lists, npy_file_lists)
-  return torch.utils.data.DataLoader(
-      dataset,
-      batch_size=params.batch_size,
-      collate_fn=Collator(params).collate,
-      shuffle=not is_distributed,
-      sampler=DistributedSampler(dataset) if is_distributed else None,
-      pin_memory=True,
-      drop_last=True,
-      num_workers=os.cpu_count())
+    dataset = NumpyFileDataset(wav_file_lists, npy_file_lists)
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_size=params.batch_size,
+        collate_fn=Collator(params).collate,
+        shuffle=not is_distributed,
+        sampler=DistributedSampler(dataset) if is_distributed else None,
+        pin_memory=True,
+        drop_last=True,
+        num_workers=os.cpu_count())
 
 def from_path(data_dirs, spec_dir, params, is_distributed=False):
-  dataset = NumpyDataset(data_dirs, spec_dir)
-  return torch.utils.data.DataLoader(
-      dataset,
-      batch_size=params.batch_size,
-      collate_fn=Collator(params).collate,
-      shuffle=not is_distributed,
-      sampler=DistributedSampler(dataset) if is_distributed else None,
-      pin_memory=True,
-      drop_last=True,
-      num_workers=os.cpu_count())
+    dataset = NumpyDataset(data_dirs, spec_dir)
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_size=params.batch_size,
+        collate_fn=Collator(params).collate,
+        shuffle=not is_distributed,
+        sampler=DistributedSampler(dataset) if is_distributed else None,
+        pin_memory=True,
+        drop_last=True,
+        num_workers=os.cpu_count())
