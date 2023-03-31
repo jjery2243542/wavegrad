@@ -39,11 +39,12 @@ def _nested_map(struct, map_fn):
 
 
 class WaveGradLearner:
-    def __init__(self, model_dir, model, dataset, optimizer, scheduler, params, *args, **kwargs):
+    def __init__(self, model_dir, model, train_dataset, valid_datasets, optimizer, scheduler, params, *args, **kwargs):
         os.makedirs(model_dir, exist_ok=True)
         self.model_dir = model_dir
         self.model = model
-        self.dataset = dataset
+        self.train_dataset = train_dataset
+        self.valid_datasets = valid_datasets # contains a dict: {name1: dataset1, name2: dataset2...}
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.params = params
@@ -103,19 +104,21 @@ class WaveGradLearner:
         except FileNotFoundError:
             return False
 
-    def valid(self):
+    def valid(self, dataset, name):
         device = next(self.model.parameters()).device
-        while True:
-            for features in tqdm(self.dataset, desc=f'Epoch {self.step // len(self.dataset)}') if self.is_master else self.dataset:
-                if max_steps is not None and self.step >= max_steps:
-                    return
-                features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
-                loss = self.valid_step(features)
+        loss_sum = 0.
+        count = 0
+        for features in tqdm(dataset, desc=f'Validation {name}: Step {self.step}'):
+            features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
+            loss = self.valid_step(features)
+            loss_sum += loss.cpu().item()
+            count += 1
+        return loss_sum / count
 
     def train(self, max_steps=None):
         device = next(self.model.parameters()).device
         while True:
-            for features in tqdm(self.dataset, desc=f'Epoch {self.step // len(self.dataset)}') if self.is_master else self.dataset:
+            for features in tqdm(self.train_dataset, desc=f'Training: Epoch {self.step // len(self.train_dataset)}') if self.is_master else self.train_dataset:
                 if max_steps is not None and self.step >= max_steps:
                     return
                 features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
@@ -123,16 +126,17 @@ class WaveGradLearner:
                 if torch.isnan(loss).any():
                     raise RuntimeError(f'Detected NaN loss at step {self.step}.')
                 if self.is_master:
-                    if self.step % 10000 == 0:
-                        self._write_summary(self.step, features, loss, subset="train")
-                    if self.step % 10000 == 0:
+                    if self.step % 10000 == 0 or self.step == max_steps - 1:
+                        valid_losses = {}
+                        for name, dataset in self.valid_datasets.items():
+                            valid_loss = self.valid(dataset=dataset, name=name)
+                            valid_losses[name] = valid_loss
+                        self._write_summary(self.step, features, loss, valid_losses)
+                    if self.step % 10000 == 0 or self.step == max_steps - 1:
                         self.save_to_checkpoint()
                 self.step += 1
 
     def valid_step(self, features):
-        for param in self.model.parameters():
-            param.grad = None
-
         audio = features['audio']
         spectrogram = features['spectrogram']
 
@@ -141,7 +145,7 @@ class WaveGradLearner:
         device = audio.device
         self.noise_level = self.noise_level.to(device)
 
-        with self.autocast:
+        with torch.no_grad():
             s = torch.randint(1, S + 1, [N], device=audio.device)
             l_a, l_b = self.noise_level[s-1], self.noise_level[s]
             noise_scale = l_a + torch.rand(N, device=audio.device) * (l_b - l_a)
@@ -184,31 +188,37 @@ class WaveGradLearner:
         self.scheduler.step()
         return loss
 
-    def _write_summary(self, step, features, loss, subset="train"):
+    def _write_summary(self, step, features, train_loss, valid_losses):
         writer = self.summary_writer or SummaryWriter(self.model_dir, purge_step=step)
         writer.add_audio('audio/reference', features['audio'][0], step, sample_rate=self.params.sample_rate)
-        writer.add_scalar(f'{subset}/loss', loss, step)
-        writer.add_scalar(f'{subset}/grad_norm', self.grad_norm, step)
-        writer.add_scalar(f'{subset}/lr', self.scheduler.get_last_lr()[0], step)
+        writer.add_scalar(f'train/train_loss', train_loss, step)
+        for name, valid_loss in valid_losses.items():
+            writer.add_scalar(f'train/{name}/valid_loss', valid_loss, step)
+        writer.add_scalar(f'train/grad_norm', self.grad_norm, step)
+        writer.add_scalar(f'train/lr', self.scheduler.get_last_lr()[0], step)
         writer.flush()
         self.summary_writer = writer
 
 
-def _train_impl(replica_id, model, dataset, args, params):
+def _train_impl(replica_id, model, train_dataset, valid_datasets, args, params):
     torch.backends.cudnn.benchmark = True
     opt = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
     scheduler = CosineAnnealingLR(opt, T_max=args.max_steps, eta_min=params.min_lr)
 
-    learner = WaveGradLearner(args.model_dir, model, dataset, opt, scheduler, params, fp16=args.fp16)
+    learner = WaveGradLearner(args.model_dir, model, train_dataset, valid_datasets, opt, scheduler, params, fp16=args.fp16)
     learner.is_master = (replica_id == 0)
     learner.restore_from_checkpoint()
     learner.train(max_steps=args.max_steps)
 
 
 def train(args, params):
-    data_loader = dataset_from_lists(args.train_wav_files, args.train_npy_files, params)
+    train_data_loader = dataset_from_lists(args.train_wav_files, args.train_npy_files, params)
+    valid_sets = {}
+    for valid_wav_file, valid_npy_file, name in zip(args.valid_wav_files, args.valid_npy_files, args.valid_names):
+        valid_data_loader = dataset_from_lists([valid_wav_file], [valid_npy_file], params)
+        valid_sets[name] = valid_data_loader
     model = WaveGrad(params).cuda()
-    _train_impl(0, model, data_loader, args, params)
+    _train_impl(0, model, train_data_loader, valid_sets, args, params)
 
 
 def train_distributed(replica_id, replica_count, port, args, params):
@@ -220,5 +230,9 @@ def train_distributed(replica_id, replica_count, port, args, params):
     torch.cuda.set_device(device)
     model = WaveGrad(params).to(device)
     model = DistributedDataParallel(model, device_ids=[replica_id])
-    data_loader = dataset_from_lists(args.wav_files, args.npy_files, params, is_distributed=True)
-    _train_impl(replica_id, model, data_loader, args, params)
+    train_data_loader = dataset_from_lists(args.train_wav_files, args.train_npy_files, params, is_distributed=True)
+    valid_sets = {}
+    for valid_wav_file, valid_npy_file, name in zip(args.valid_wav_files, args.valid_npy_files, args.valid_names):
+        valid_data_loader = dataset_from_lists([valid_wav_file], [valid_npy_file], params)
+        valid_sets[name] = valid_data_loader
+    _train_impl(replica_id, model, train_data_loader, valid_sets, args, params)

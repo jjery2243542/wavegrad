@@ -56,6 +56,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_npy_files', nargs="+", help='training .npy file list')
     parser.add_argument('--valid_wav_files', nargs='+', help='validation .wav file list')
     parser.add_argument('--valid_npy_files', nargs="+", help='validation .npy file list')
+    parser.add_argument('--valid_names', nargs="+", help="validation datasets names")
     parser.add_argument('--max_steps', default=None, type=int,
         help='maximum number of training steps')
     parser.add_argument('--conf', default=None, help="the overide conf (.yaml)")
