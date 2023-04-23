@@ -25,8 +25,27 @@ from itertools import product as cartesian_product
 from tqdm import tqdm
 
 from wavegrad.params import params
-from wavegrad.inference import predict
+#from wavegrad.inference import predict
 
+def cosine_beta_schedule(timesteps, s=0.008):
+    """
+    cosine schedule as proposed in https://arxiv.org/abs/2102.09672
+    """
+    steps = timesteps + 1
+    x = torch.linspace(0, timesteps, steps)
+    alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
+    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    return torch.clip(betas, 0.0001, 0.9999)
+
+def get_noise_schedule(name):
+    if name == "linear":
+        beta = np.linspace(1e-6, 0.01, 1000)
+    elif noise_schedule == "cosine":
+        beta = cosine_beta_schedule(1000)
+    else:
+        raise NotImplementedError(f"{params.noise_schedule} not implemented.")
+    return beta
 
 def _round_up(x, multiple):
     return (x + multiple - 1) // multiple * multiple

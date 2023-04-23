@@ -176,8 +176,9 @@ class WaveGrad(nn.Module):
                 UBlock(128, 128, 2, [1, 2, 4, 8]),
                 UBlock(128, 128, 2, [1, 2, 4, 8]),
             ])
-            self.norm = torch.nn.LayerNorm(1024)
-            self.first_conv = Conv1d(1024, 1024, 1)
+            av_dim = 1024 if self.params.av_model_size == "large" else 768
+            self.norm = torch.nn.LayerNorm(av_dim)
+            self.first_conv = Conv1d(av_dim, 1024, 1)
             self.last_conv = Conv1d(128, 1, 3, padding=1)
 
         elif self.params.model_size == "large":
@@ -211,8 +212,8 @@ class WaveGrad(nn.Module):
                 UBlock(128, 128, 2, [1, 2, 4, 8]),
                 UBlock(128, 128, 2, [1, 2, 4, 8]),
             ])
-            self.norm = torch.nn.LayerNorm(1024)
-            self.first_conv = Conv1d(1024, 1024, 1)
+            self.norm = torch.nn.LayerNorm(av_dim)
+            self.first_conv = Conv1d(av_dim, 1024, 1)
             # a hack to use ln as first_conv to avoid changing forward
             #self.first_conv = torch.nn.LayerNorm(1024)
             self.last_conv = Conv1d(128, 1, 3, padding=1)

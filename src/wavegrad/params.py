@@ -37,6 +37,7 @@ class AttrDict(dict):
 params = AttrDict(
     # Training params
     batch_size=32,
+    valid_batch_size=16,
     learning_rate=2e-4,
     min_lr=2e-6,
     max_grad_norm=1.0,
@@ -45,8 +46,13 @@ params = AttrDict(
     sample_rate=16000,
     hop_samples=640,  # Don't change this. Really.
     crop_mel_frames=24,
+    frame_rate=25, # frame rate for avhubert 
+    max_size=100, 
+    av_model_size="large",
 
     # Model params
-    noise_schedule=np.linspace(1e-6, 0.01, 1000).tolist(),
+    #noise_schedule=np.linspace(1e-6, 0.01, 1000).tolist(),
+    noise_schedule="linear",
     model_size="base",
+    sample_probs=[0.333, 0.333, 0.334],
 )

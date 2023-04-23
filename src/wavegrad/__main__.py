@@ -16,18 +16,29 @@
 from argparse import ArgumentParser
 from torch.cuda import device_count
 from torch.multiprocessing import spawn
+from torch import multiprocessing
 import yaml
 from wavegrad.learner import train, train_distributed
 from wavegrad.params import params
-
+import signal
+import os
 
 def _get_free_port():
     import socketserver
     with socketserver.TCPServer(('localhost', 0), None) as s:
         return s.server_address[1]
 
+def handler(sig, frame):
+    print(f"main receive signal {sig}")
+    print(multiprocessing.active_children())
+    children = multiprocessing.active_children()
+    for child in children:
+        os.kill(child.pid, signal.SIGUSR1)
+        print(f"main send {signal.SIGUSR1} to {child.pid}")
 
 def main(args):
+    signal.signal(signal.SIGUSR1, handler)
+
     # loading override parameters
     if args.conf:
         with open(args.conf) as f:
@@ -53,10 +64,11 @@ if __name__ == '__main__':
     #    help='space separated list of directories from which to read .wav files for training')
     #parser.add_argument('spec_dir', help='.npy file directory')
     parser.add_argument('--train_wav_files', nargs='+', help='training .wav file list')
-    parser.add_argument('--train_npy_files', nargs="+", help='training .npy file list')
+    parser.add_argument('--train_mp4_files', nargs="+", help='training .mp4 file list')
     parser.add_argument('--valid_wav_files', nargs='+', help='validation .wav file list')
-    parser.add_argument('--valid_npy_files', nargs="+", help='validation .npy file list')
-    parser.add_argument('--valid_names', nargs="+", help="validation datasets names")
+    parser.add_argument('--valid_mp4_files', nargs="+", help='validation .mp4 file list')
+    #parser.add_argument('--sample_probs', nargs="+", type=float, help='sample probs for a, v, av')
+    parser.add_argument('--root_dir', help="root_dir for dataset")
     parser.add_argument('--max_steps', default=None, type=int,
         help='maximum number of training steps')
     parser.add_argument('--conf', default=None, help="the overide conf (.yaml)")

@@ -22,7 +22,7 @@ from argparse import ArgumentParser
 
 from wavegrad.params import AttrDict, params as base_params
 from wavegrad.model import WaveGrad
-
+from wavegrad.noise_schedule import get_noise_schedule
 
 models = {}
 
@@ -41,7 +41,8 @@ def predict(spectrogram, model_dir=None, params=None, device=torch.device('cuda'
     model = models[model_dir]
     model.params.override(params)
     with torch.no_grad():
-        beta = np.array(model.params.noise_schedule)
+        beta = get_noise_schedule(model.params.noise_schedule)
+ 
         alpha = 1 - beta
         alpha_cum = np.cumprod(alpha)
 

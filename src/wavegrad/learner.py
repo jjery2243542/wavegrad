@@ -25,8 +25,14 @@ from tqdm import tqdm
 
 from wavegrad.dataset import from_path as dataset_from_path
 from wavegrad.dataset import from_file_lists as dataset_from_lists
+from wavegrad.dataset import crop_features
 from wavegrad.model import WaveGrad
+from wavegrad.noise_schedule import get_noise_schedule
 
+import sys
+sys.path.append("/home-nfs/jjery2243542/av_hubert/feature_extraction")
+from feature_extraction import FeatureExtractor
+import signal
 
 def _nested_map(struct, map_fn):
     if isinstance(struct, tuple):
@@ -38,13 +44,25 @@ def _nested_map(struct, map_fn):
     return map_fn(struct)
 
 
+class SignalHandler:
+    def __init__(self, learner):
+        self.learner = learner
+
+    def handle(self, sig, frames):
+        print(f"learner {self.learner.replica_id} receive {sig}")
+        if self.learner.is_master:
+            print(f"save checkpoint for step {self.learner.step}")
+            self.learner.save_to_checkpoint()
+            exit(0)
+            #raise KeyboardInterrupt
+
 class WaveGradLearner:
-    def __init__(self, model_dir, model, train_dataset, valid_datasets, optimizer, scheduler, params, *args, **kwargs):
+    def __init__(self, replica_id, model_dir, model, train_dataset, valid_dataset, optimizer, scheduler, params, *args, **kwargs):
         os.makedirs(model_dir, exist_ok=True)
         self.model_dir = model_dir
         self.model = model
         self.train_dataset = train_dataset
-        self.valid_datasets = valid_datasets # contains a dict: {name1: dataset1, name2: dataset2...}
+        self.valid_dataset = valid_dataset
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.params = params
@@ -52,13 +70,23 @@ class WaveGradLearner:
         self.scaler = torch.cuda.amp.GradScaler(enabled=kwargs.get('fp16', False))
         self.step = 0
         self.is_master = True
+        self.replica_id = replica_id
 
-        beta = np.array(self.params.noise_schedule)
+        beta = get_noise_schedule(self.params.noise_schedule)
+ 
+        #beta = np.array(self.params.noise_schedule)
         noise_level = np.cumprod(1 - beta)**0.5
         noise_level = np.concatenate([[1.0], noise_level], axis=0)
         self.noise_level = torch.tensor(noise_level.astype(np.float32))
         self.loss_fn = nn.L1Loss()
         self.summary_writer = None
+
+        self.extractor = self.load_extractor(replica_id=self.replica_id, max_size=self.params.max_size, model_size=self.params.av_model_size)
+
+    def load_extractor(self, replica_id, max_size, model_size="large"):
+        ckpt_path = f"/share/data/speech/jjery2243542/checkpoints/avhubert/{model_size}_vox_iter5.pt"
+        user_dir = "/home-nfs/jjery2243542/av_hubert/avhubert"
+        return FeatureExtractor(ckpt_path, user_dir, replica_id, max_size=max_size)
 
     def state_dict(self):
         if hasattr(self.model, 'module') and isinstance(self.model.module, nn.Module):
@@ -104,13 +132,16 @@ class WaveGradLearner:
         except FileNotFoundError:
             return False
 
-    def valid(self, dataset, name):
+    def valid(self, dataset, name, sample_probs):
         device = next(self.model.parameters()).device
         loss_sum = 0.
         count = 0
-        for features in tqdm(dataset, desc=f'Validation {name}: Step {self.step}'):
-            features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
-            loss = self.valid_step(features)
+        for batch in tqdm(dataset, desc=f'Validation {name}: Step {self.step}'):
+            with torch.no_grad():
+                features, audio_starts, audio_size = self.extractor.extract_feature(batch["audio_paths"], batch["video_paths"], sample_probs=sample_probs)
+            features, audio = crop_features(self.params, features, batch["audios"], audio_starts, audio_size)
+            audio = audio.to(device)
+            loss = self.valid_step(features, audio)
             loss_sum += loss.cpu().item()
             count += 1
         return loss_sum / count
@@ -118,27 +149,38 @@ class WaveGradLearner:
     def train(self, max_steps=None):
         device = next(self.model.parameters()).device
         while True:
-            for features in tqdm(self.train_dataset, desc=f'Training: Epoch {self.step // len(self.train_dataset)}') if self.is_master else self.train_dataset:
+            for batch in tqdm(self.train_dataset, desc=f'Training: Epoch {self.step // len(self.train_dataset)}') if self.is_master else self.train_dataset:
                 if max_steps is not None and self.step >= max_steps:
                     return
-                features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
-                loss = self.train_step(features)
+                #features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
+                # avhubert feature extraction 
+                with torch.no_grad():
+                    features, audio_starts, audio_size = self.extractor.extract_feature(batch["audio_paths"], batch["video_paths"], sample_probs=self.params.sample_probs)
+                features, audio = crop_features(self.params, features, batch["audios"], audio_starts, audio_size)
+                audio = audio.to(device)
+                loss = self.train_step(features, audio)
                 if torch.isnan(loss).any():
                     raise RuntimeError(f'Detected NaN loss at step {self.step}.')
                 if self.is_master:
-                    if self.step % 10000 == 0 or self.step == max_steps - 1:
-                        valid_losses = {}
-                        for name, dataset in self.valid_datasets.items():
-                            valid_loss = self.valid(dataset=dataset, name=name)
-                            valid_losses[name] = valid_loss
-                        self._write_summary(self.step, features, loss, valid_losses)
-                    if self.step % 10000 == 0 or self.step == max_steps - 1:
+                    if self.step != 0 and self.step % 5000 == 0 or self.step == max_steps - 1:
+                        losses = {"train": loss}
+                        for modal in ["a", "v", "av"]:
+                            if modal == "a":
+                                sample_probs = [1.0, 0.0, 0.0]
+                            elif modal == "v":
+                                sample_probs = [0.0, 1.0, 0.0]
+                            elif modal == "av":
+                                sample_probs = [0.0, 0.0, 1.0]
+                            valid_loss = self.valid(dataset=self.valid_dataset, name=modal, sample_probs=sample_probs)
+                            losses[f"valid_{modal}"] = valid_loss
+                        self._write_summary(self.step, features, losses)
+                    if self.step % 5000 == 0 or self.step == max_steps - 1:
                         self.save_to_checkpoint()
                 self.step += 1
 
-    def valid_step(self, features):
-        audio = features['audio']
-        spectrogram = features['spectrogram']
+    def valid_step(self, features, audio):
+        #audio = features['audio']
+        #spectrogram = features['spectrogram']
 
         N, T = audio.shape
         S = 1000
@@ -153,16 +195,16 @@ class WaveGradLearner:
             noise = torch.randn_like(audio)
             noisy_audio = noise_scale * audio + (1.0 - noise_scale**2)**0.5 * noise
 
-            predicted = self.model(noisy_audio, spectrogram, noise_scale.squeeze(1))
+            predicted = self.model(noisy_audio, features, noise_scale.squeeze(1))
             loss = self.loss_fn(noise, predicted.squeeze(1))
         return loss
 
-    def train_step(self, features):
+    def train_step(self, features, audio):
         for param in self.model.parameters():
             param.grad = None
 
-        audio = features['audio']
-        spectrogram = features['spectrogram']
+        #audio = features['audio']
+        #spectrogram = features['spectrogram']
 
         N, T = audio.shape
         S = 1000
@@ -177,7 +219,7 @@ class WaveGradLearner:
             noise = torch.randn_like(audio)
             noisy_audio = noise_scale * audio + (1.0 - noise_scale**2)**0.5 * noise
 
-            predicted = self.model(noisy_audio, spectrogram, noise_scale.squeeze(1))
+            predicted = self.model(noisy_audio, features, noise_scale.squeeze(1))
             loss = self.loss_fn(noise, predicted.squeeze(1))
 
         self.scaler.scale(loss).backward()
@@ -188,37 +230,40 @@ class WaveGradLearner:
         self.scheduler.step()
         return loss
 
-    def _write_summary(self, step, features, train_loss, valid_losses):
+    def _write_summary(self, step, features, losses):
         writer = self.summary_writer or SummaryWriter(self.model_dir, purge_step=step)
-        writer.add_audio('audio/reference', features['audio'][0], step, sample_rate=self.params.sample_rate)
-        writer.add_scalar(f'train/train_loss', train_loss, step)
-        for name, valid_loss in valid_losses.items():
-            writer.add_scalar(f'train/{name}/valid_loss', valid_loss, step)
+        #writer.add_audio('audio/reference', features['audio'][0], step, sample_rate=self.params.sample_rate)
+        for key, val in losses.items():
+            writer.add_scalar(f"loss/{key}", val, step)
+        #writer.add_scalar(f'train/train_loss', train_loss, step)
+        #for name, valid_loss in valid_losses.items():
+        #    writer.add_scalar(f'train/{name}_valid_loss', valid_loss, step)
         writer.add_scalar(f'train/grad_norm', self.grad_norm, step)
         writer.add_scalar(f'train/lr', self.scheduler.get_last_lr()[0], step)
         writer.flush()
         self.summary_writer = writer
 
 
-def _train_impl(replica_id, model, train_dataset, valid_datasets, args, params):
+def _train_impl(replica_id, model, train_dataset, valid_dataset, args, params):
     torch.backends.cudnn.benchmark = True
     opt = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
     scheduler = CosineAnnealingLR(opt, T_max=args.max_steps, eta_min=params.min_lr)
 
-    learner = WaveGradLearner(args.model_dir, model, train_dataset, valid_datasets, opt, scheduler, params, fp16=args.fp16)
+    learner = WaveGradLearner(replica_id, args.model_dir, model, train_dataset, valid_dataset, opt, scheduler, params, fp16=args.fp16)
     learner.is_master = (replica_id == 0)
+
+    handler = SignalHandler(learner)
+    signal.signal(signal.SIGUSR1, handler.handle)
+
     learner.restore_from_checkpoint()
     learner.train(max_steps=args.max_steps)
 
 
 def train(args, params):
-    train_data_loader = dataset_from_lists(args.train_wav_files, args.train_npy_files, params)
-    valid_sets = {}
-    for valid_wav_file, valid_npy_file, name in zip(args.valid_wav_files, args.valid_npy_files, args.valid_names):
-        valid_data_loader = dataset_from_lists([valid_wav_file], [valid_npy_file], params)
-        valid_sets[name] = valid_data_loader
+    train_data_loader = dataset_from_lists(args.train_wav_files, args.train_mp4_files, params, args.root_dir, is_distributed=False)
+    valid_data_loader = dataset_from_lists(args.valid_wav_files, args.valid_mp4_files, params, args.root_dir)
     model = WaveGrad(params).cuda()
-    _train_impl(0, model, train_data_loader, valid_sets, args, params)
+    _train_impl(0, model, train_data_loader, valid_data_loader, args, params)
 
 
 def train_distributed(replica_id, replica_count, port, args, params):
@@ -230,9 +275,6 @@ def train_distributed(replica_id, replica_count, port, args, params):
     torch.cuda.set_device(device)
     model = WaveGrad(params).to(device)
     model = DistributedDataParallel(model, device_ids=[replica_id])
-    train_data_loader = dataset_from_lists(args.train_wav_files, args.train_npy_files, params, is_distributed=True)
-    valid_sets = {}
-    for valid_wav_file, valid_npy_file, name in zip(args.valid_wav_files, args.valid_npy_files, args.valid_names):
-        valid_data_loader = dataset_from_lists([valid_wav_file], [valid_npy_file], params)
-        valid_sets[name] = valid_data_loader
-    _train_impl(replica_id, model, train_data_loader, valid_sets, args, params)
+    train_data_loader = dataset_from_lists(args.train_wav_files, args.train_mp4_files, params, args.root_dir, is_distributed=True)
+    valid_data_loader = dataset_from_lists(args.valid_wav_files, args.valid_mp4_files, params, args.root_dir, is_distributed=False, is_valid=True)
+    _train_impl(replica_id, model, train_data_loader, valid_data_loader, args, params)
