@@ -63,11 +63,10 @@ if __name__ == '__main__':
     #parser.add_argument('data_dirs', nargs='+',
     #    help='space separated list of directories from which to read .wav files for training')
     #parser.add_argument('spec_dir', help='.npy file directory')
-    parser.add_argument('--train_wav_files', nargs='+', help='training .wav file list')
-    parser.add_argument('--train_mp4_files', nargs="+", help='training .mp4 file list')
-    parser.add_argument('--valid_wav_files', nargs='+', help='validation .wav file list')
-    parser.add_argument('--valid_mp4_files', nargs="+", help='validation .mp4 file list')
-    #parser.add_argument('--sample_probs', nargs="+", type=float, help='sample probs for a, v, av')
+    parser.add_argument('--train_wav_file', help='training .wav file list')
+    parser.add_argument('--train_npy_files', nargs="+", help='training .npy file list, should be the order of a,v,av.')
+    oarser.add_argument('--valid_wav_file', help='validation .wav file list')
+    parser.add_argument('--valid_npy_files', nargs="+", help='validation .npy file list, should be the order of a,v,av.')
     parser.add_argument('--root_dir', help="root_dir for dataset")
     parser.add_argument('--max_steps', default=None, type=int,
         help='maximum number of training steps')

@@ -30,8 +30,6 @@ from wavegrad.model import WaveGrad
 from wavegrad.noise_schedule import get_noise_schedule
 
 import sys
-sys.path.append("/home-nfs/jjery2243542/av_hubert/feature_extraction")
-from feature_extraction import FeatureExtractor
 import signal
 
 def _nested_map(struct, map_fn):
@@ -43,6 +41,21 @@ def _nested_map(struct, map_fn):
         return { k: _nested_map(v, map_fn) for k, v in struct.items() }
     return map_fn(struct)
 
+# sample from a, v, av
+def sample(a_features, v_features, av_features, sample_probs):
+    batch_size = a_features.shape[0]
+    rn = np.random.rand(batch_size)
+
+    features = []
+    for i, r in enumerate(rn):
+        if r < sample_probs[0]:
+            features.append(a_features[i])
+        elif r > (sample_probs[0] + sample_probs[1]):
+            features.append(av_features[i])
+        else:
+            features.append(v_features[i])
+    features = torch.stack(features, dim=0)
+    return features
 
 class SignalHandler:
     def __init__(self, learner):
@@ -81,12 +94,6 @@ class WaveGradLearner:
         self.loss_fn = nn.L1Loss()
         self.summary_writer = None
 
-        self.extractor = self.load_extractor(replica_id=self.replica_id, max_size=self.params.max_size, model_size=self.params.av_model_size)
-
-    def load_extractor(self, replica_id, max_size, model_size="large"):
-        ckpt_path = f"/share/data/speech/jjery2243542/checkpoints/avhubert/{model_size}_vox_iter5.pt"
-        user_dir = "/home-nfs/jjery2243542/av_hubert/avhubert"
-        return FeatureExtractor(ckpt_path, user_dir, replica_id, max_size=max_size)
 
     def state_dict(self):
         if hasattr(self.model, 'module') and isinstance(self.model.module, nn.Module):
@@ -137,10 +144,8 @@ class WaveGradLearner:
         loss_sum = 0.
         count = 0
         for batch in tqdm(dataset, desc=f'Validation {name}: Step {self.step}'):
-            with torch.no_grad():
-                features, audio_starts, audio_size = self.extractor.extract_feature(batch["audio_paths"], batch["video_paths"], sample_probs=sample_probs)
-            features, audio = crop_features(self.params, features, batch["audios"], audio_starts, audio_size)
             audio = audio.to(device)
+            features = sample(batch["a_features"], batch["v_features"], batch["av_features"], sample_probs=sample_probs)
             loss = self.valid_step(features, audio)
             loss_sum += loss.cpu().item()
             count += 1
@@ -152,13 +157,12 @@ class WaveGradLearner:
             for batch in tqdm(self.train_dataset, desc=f'Training: Epoch {self.step // len(self.train_dataset)}') if self.is_master else self.train_dataset:
                 if max_steps is not None and self.step >= max_steps:
                     return
-                #features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
-                # avhubert feature extraction 
-                with torch.no_grad():
-                    features, audio_starts, audio_size = self.extractor.extract_feature(batch["audio_paths"], batch["video_paths"], sample_probs=self.params.sample_probs)
-                features, audio = crop_features(self.params, features, batch["audios"], audio_starts, audio_size)
-                audio = audio.to(device)
-                loss = self.train_step(features, audio)
+                batch = _nested_map(batch, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
+
+                # sample for a, v, av
+                features = sample(batch["a_features"], batch["v_features"], batch["av_features"], sample_probs=self.params.sample_probs)
+                loss = self.train_step(features, batch["audio"])
+
                 if torch.isnan(loss).any():
                     raise RuntimeError(f'Detected NaN loss at step {self.step}.')
                 if self.is_master:
@@ -260,8 +264,10 @@ def _train_impl(replica_id, model, train_dataset, valid_dataset, args, params):
 
 
 def train(args, params):
-    train_data_loader = dataset_from_lists(args.train_wav_files, args.train_mp4_files, params, args.root_dir, is_distributed=False)
-    valid_data_loader = dataset_from_lists(args.valid_wav_files, args.valid_mp4_files, params, args.root_dir)
+    wav_dir = os.path.join(args.root_dir, "data")
+    feat_dir = os.path.join(args.root_dir, "features")
+    train_data_loader = dataset_from_lists(args.train_wav_files, args.train_mp4_files, params, wav_dir, feat_dir, is_distributed=False)
+    valid_data_loader = dataset_from_lists(args.valid_wav_files, args.valid_mp4_files, params, wav_dir, feat_dir)
     model = WaveGrad(params).cuda()
     _train_impl(0, model, train_data_loader, valid_data_loader, args, params)
 
@@ -275,6 +281,9 @@ def train_distributed(replica_id, replica_count, port, args, params):
     torch.cuda.set_device(device)
     model = WaveGrad(params).to(device)
     model = DistributedDataParallel(model, device_ids=[replica_id])
-    train_data_loader = dataset_from_lists(args.train_wav_files, args.train_mp4_files, params, args.root_dir, is_distributed=True)
-    valid_data_loader = dataset_from_lists(args.valid_wav_files, args.valid_mp4_files, params, args.root_dir, is_distributed=False, is_valid=True)
+
+    wav_dir = os.path.join(args.root_dir, "data")
+    feat_dir = os.path.join(args.root_dir, "features")
+    train_data_loader = dataset_from_lists(args.train_wav_files, args.train_mp4_files, params, wav_dir, feat_dir, is_distributed=True)
+    valid_data_loader = dataset_from_lists(args.valid_wav_files, args.valid_mp4_files, params, wav_dir, feat_dir, is_distributed=False, is_valid=True)
     _train_impl(replica_id, model, train_data_loader, valid_data_loader, args, params)

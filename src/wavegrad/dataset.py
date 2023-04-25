@@ -84,29 +84,48 @@ class PathDataset(torch.utils.data.Dataset):
         }
 
 class NumpyFileDataset(torch.utils.data.Dataset):
-    def __init__(self, wav_file_lists, npy_file_lists):
+    def __init__(self, wav_file_list, npy_file_lists, wav_root_dir, feat_root_dir):
+        # npy_files in an order of a, v, av
         super().__init__()
 
-        self.wav_npy_pairs = []
-        for wav_file_list, npy_file_list in zip(wav_file_lists, npy_file_lists):
-            with open(wav_file_list) as f_wav, open(npy_file_list) as f_npy:
-                for wav_line, npy_line in zip(f_wav, f_npy):
-                    self.wav_npy_pairs.append((wav_line.strip(), npy_line.strip()))
+        self.data = []
+        with open(wav_file_list) as f_wav, open(npy_file_lists[0]) as f_a, open(npy_file_lists[1]) as f_v, open(npy_file_lists[2]) as f_av:
+            for wav_line, a_line, v_line, av_line in zip(f_wav, f_a, f_v, f_av):
+                data_dict = {"wav": os.path.join(wav_root_dir, wav_line.strip()), 
+                        "a": os.path.join(feat_root_dir, a_line.strip()), 
+                        "v": os.path.join(feat_root_dir, v_line.strip()), 
+                        "av": os.path.join(feat_root_dir, av_line.strip()),
+                    }
+                self.data.append(data_dict)
 
     def __len__(self):
-        return len(self.wav_npy_pairs)
+        return len(self.data)
 
     def __getitem__(self, idx):
-        audio_filename = self.wav_npy_pairs[idx][0]
-        spec_filename = self.wav_npy_pairs[idx][1]
-        signal, _ = torchaudio.load(audio_filename)
-        spectrogram = np.load(spec_filename)
-        return {
-            'filename': audio_filename,
-            'audio': signal[0],
-            'spectrogram': spectrogram,
-        }
+        wav_path = self.data[idx]["wav"]
+        signal, _ = torchaudio.load(wav_path)
 
+        a_path = self.data["idx"]["a"]
+        v_path = self.data["idx"]["v"]
+        av_path = self.data["idx"]["av"]
+
+        a_features = np.load(a_path)
+        v_features = np.load(v_path)
+        av_features = np.load(av_path)
+
+        # cut to the same length
+        min_len = min(a_features.shape[0], v_features.shape[0], av_features.shape[0])
+        a_features = a_features[:min_len, :]
+        v_features = v_features[:min_len, :]
+        av_features = av_features[:min_len, :]
+
+        return {
+            'filename': wav_path,
+            'audio': signal[0],
+            'a_features': a_features,
+            'v_features': v_features,
+            'av_features': av_features,
+        }
 
 class NumpyDataset(torch.utils.data.Dataset):
     def __init__(self, paths, spec_dir):
@@ -139,14 +158,15 @@ class Collator:
         samples_per_frame = self.params.hop_samples
         for record in minibatch:
             # Filter out records that aren't long enough.
-            if len(record['spectrogram']) < self.params.crop_mel_frames:
-                del record['spectrogram']
+            if len(record['a_features']) < self.params.crop_mel_frames:
                 del record['audio']
                 continue
 
-            start = random.randint(0, record['spectrogram'].shape[0] - self.params.crop_mel_frames)
+            start = random.randint(0, record['a_features'].shape[0] - self.params.crop_mel_frames)
             end = start + self.params.crop_mel_frames
-            record['spectrogram'] = record['spectrogram'][start:end].T
+            record['a_features'] = record['a_features'][start:end].T
+            record['v_features'] = record['v_features'][start:end].T
+            record['av_features'] = record['av_features'][start:end].T
 
             start *= samples_per_frame
             end *= samples_per_frame
@@ -154,11 +174,14 @@ class Collator:
             record['audio'] = np.pad(record['audio'], (0, (end-start) - len(record['audio'])), mode='constant')
 
         audio = np.stack([record['audio'] for record in minibatch if 'audio' in record])
-        spectrogram = torch.stack([record['spectrogram'] for record in minibatch if 'spectrogram' in record], dim=0)
-        #spectrogram = np.stack([record['spectrogram'] for record in minibatch if 'spectrogram' in record])
+        a_features = np.stack([record['a_features'] for record in minibatch if 'audio' in record])
+        v_features = np.stack([record['v_features'] for record in minibatch if 'audio' in record])
+        av_features = np.stack([record['av_features'] for record in minibatch if 'audio' in record])
         return {
             'audio': torch.from_numpy(audio),
-            'spectrogram': spectrogram,
+            'a_features': torch.from_numpy(a_features),
+            'v_features': torch.from_numpy(v_features),
+            'av_features': torch.from_numpy(av_features),
         }
 
 class PathCollator(Collator):
@@ -193,9 +216,8 @@ def crop_features(params, features, audios, audio_starts, audio_size):
     audio = torch.stack(cropped["audio"], dim=0)
     return features, audio
 
-def from_file_lists(wav_file_lists, mp4_file_lists, params, root_dir, is_distributed=False, is_valid=False):
-    #dataset = NumpyFileDataset(wav_file_lists, npy_file_lists)
-    dataset = PathDataset(wav_file_lists, mp4_file_lists, root_dir=root_dir) 
+def from_file_lists(wav_file_list, npy_file_lists, params, wav_root_dir, feat_root_dir, is_distributed=False, is_valid=False):
+    dataset = NumpyFileDataset(wav_file_list, npy_file_lists, wav_root_dir, feat_root_dir)
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=params.batch_size if not is_valid else params.valid_batch_size,
