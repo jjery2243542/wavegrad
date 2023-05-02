@@ -13,14 +13,17 @@
 # limitations under the License.
 # ==============================================================================
 
+import math
 import numpy as np
 import os
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.tensorboard import SummaryWriter
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 from tqdm import tqdm
 
 from wavegrad.dataset import from_path as dataset_from_path
@@ -69,6 +72,64 @@ class SignalHandler:
             exit(0)
             #raise KeyboardInterrupt
 
+
+def get_constant_schedule_with_warmup(optimizer: Optimizer, num_warmup_steps: int, last_epoch: int = -1):
+    """
+    Create a schedule with a constant learning rate preceded by a warmup period during which the learning rate
+    increases linearly between 0 and the initial lr set in the optimizer.
+
+    Args:
+        optimizer ([`~torch.optim.Optimizer`]):
+            The optimizer for which to schedule the learning rate.
+        num_warmup_steps (`int`):
+            The number of steps for the warmup phase.
+        last_epoch (`int`, *optional*, defaults to -1):
+            The index of the last epoch when resuming training.
+
+    Return:
+        `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
+    """
+
+    def lr_lambda(current_step: int):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1.0, num_warmup_steps))
+        return 1.0
+
+    return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
+
+def get_cosine_schedule_with_warmup(
+    optimizer: Optimizer, num_warmup_steps: int, num_training_steps: int, num_cycles: float = 0.5, last_epoch: int = -1):
+    """
+    Create a schedule with a learning rate that decreases following the values of the cosine function between the
+    initial lr set in the optimizer to 0, after a warmup period during which it increases linearly between 0 and the
+    initial lr set in the optimizer.
+
+    Args:
+        optimizer ([`~torch.optim.Optimizer`]):
+            The optimizer for which to schedule the learning rate.
+        num_warmup_steps (`int`):
+            The number of steps for the warmup phase.
+        num_training_steps (`int`):
+            The total number of training steps.
+        num_periods (`float`, *optional*, defaults to 0.5):
+            The number of periods of the cosine function in a schedule (the default is to just decrease from the max
+            value to 0 following a half-cosine).
+        last_epoch (`int`, *optional*, defaults to -1):
+            The index of the last epoch when resuming training.
+
+    Return:
+        `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
+    """
+
+    def lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+        return max(0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
+
+    return LambdaLR(optimizer, lr_lambda, last_epoch)
+
+
 class WaveGradLearner:
     def __init__(self, replica_id, model_dir, model, train_dataset, valid_dataset, optimizer, scheduler, params, *args, **kwargs):
         os.makedirs(model_dir, exist_ok=True)
@@ -88,9 +149,12 @@ class WaveGradLearner:
         beta = get_noise_schedule(self.params.noise_schedule)
  
         #beta = np.array(self.params.noise_schedule)
-        noise_level = np.cumprod(1 - beta)**0.5
-        noise_level = np.concatenate([[1.0], noise_level], axis=0)
-        self.noise_level = torch.tensor(noise_level.astype(np.float32))
+        noise_level = torch.cumprod(1 - beta, dim=0)**0.5
+        noise_level = F.pad(noise_level, (1, 0), value=1.0)
+        #noise_level = torch.cat([torch.tensor([1.0]), noise_level], dim=0)
+        self.noise_level = noise_level.float()
+        #noise_level = np.concatenate([[1.0], noise_level], axis=0)
+        #self.noise_level = torch.tensor(noise_level.astype(np.float32))
         self.loss_fn = nn.L1Loss()
         self.summary_writer = None
 
@@ -139,13 +203,20 @@ class WaveGradLearner:
         except FileNotFoundError:
             return False
 
-    def valid(self, dataset, name, sample_probs):
+    def valid(self, dataset, name):
         device = next(self.model.parameters()).device
         loss_sum = 0.
         count = 0
         for batch in tqdm(dataset, desc=f'Validation {name}: Step {self.step}'):
-            audio = audio.to(device)
-            features = sample(batch["a_features"], batch["v_features"], batch["av_features"], sample_probs=sample_probs)
+            batch = _nested_map(batch, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
+            audio = batch["audio"]
+            if name == "a":
+                features = batch["a_features"]
+            elif name == 'v':
+                features = batch["v_features"]
+            else:
+                features = batch["av_features"]
+
             loss = self.valid_step(features, audio)
             loss_sum += loss.cpu().item()
             count += 1
@@ -163,19 +234,13 @@ class WaveGradLearner:
                 features = sample(batch["a_features"], batch["v_features"], batch["av_features"], sample_probs=self.params.sample_probs)
                 loss = self.train_step(features, batch["audio"])
 
-                if torch.isnan(loss).any():
-                    raise RuntimeError(f'Detected NaN loss at step {self.step}.')
+                #if torch.isnan(loss).any():
+                #    raise runtimeerror(f'detected nan loss at step {self.step}.')
                 if self.is_master:
                     if self.step != 0 and self.step % 5000 == 0 or self.step == max_steps - 1:
                         losses = {"train": loss}
                         for modal in ["a", "v", "av"]:
-                            if modal == "a":
-                                sample_probs = [1.0, 0.0, 0.0]
-                            elif modal == "v":
-                                sample_probs = [0.0, 1.0, 0.0]
-                            elif modal == "av":
-                                sample_probs = [0.0, 0.0, 1.0]
-                            valid_loss = self.valid(dataset=self.valid_dataset, name=modal, sample_probs=sample_probs)
+                            valid_loss = self.valid(dataset=self.valid_dataset, name=modal)
                             losses[f"valid_{modal}"] = valid_loss
                         self._write_summary(self.step, features, losses)
                     if self.step % 5000 == 0 or self.step == max_steps - 1:
@@ -226,12 +291,13 @@ class WaveGradLearner:
             predicted = self.model(noisy_audio, features, noise_scale.squeeze(1))
             loss = self.loss_fn(noise, predicted.squeeze(1))
 
-        self.scaler.scale(loss).backward()
-        self.scaler.unscale_(self.optimizer)
-        self.grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.params.max_grad_norm)
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
-        self.scheduler.step()
+        if not torch.isnan(loss).any():
+            self.scaler.scale(loss).backward()
+            self.scaler.unscale_(self.optimizer)
+            self.grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.params.max_grad_norm)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.scheduler.step()
         return loss
 
     def _write_summary(self, step, features, losses):
@@ -251,7 +317,13 @@ class WaveGradLearner:
 def _train_impl(replica_id, model, train_dataset, valid_dataset, args, params):
     torch.backends.cudnn.benchmark = True
     opt = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
-    scheduler = CosineAnnealingLR(opt, T_max=args.max_steps, eta_min=params.min_lr)
+    if not hasattr(params, "lr_scheduler") or params.lr_scheduler == "cosine":
+        scheduler = CosineAnnealingLR(opt, T_max=args.max_steps, eta_min=params.min_lr)
+    elif params.lr_scheduler == "cosine_w_warmup":
+        print("usng cosine_w_warmup")
+        scheduler = get_cosine_schedule_with_warmup(opt, num_warmup_steps=params.num_warmup_steps, num_training_steps=args.max_steps)
+    else:
+        scheduler = get_constant_schedule_with_warmup(opt, num_warmup_steps=params.num_warmup_steps) 
 
     learner = WaveGradLearner(replica_id, args.model_dir, model, train_dataset, valid_dataset, opt, scheduler, params, fp16=args.fp16)
     learner.is_master = (replica_id == 0)
@@ -266,8 +338,8 @@ def _train_impl(replica_id, model, train_dataset, valid_dataset, args, params):
 def train(args, params):
     wav_dir = os.path.join(args.root_dir, "data")
     feat_dir = os.path.join(args.root_dir, "features")
-    train_data_loader = dataset_from_lists(args.train_wav_files, args.train_mp4_files, params, wav_dir, feat_dir, is_distributed=False)
-    valid_data_loader = dataset_from_lists(args.valid_wav_files, args.valid_mp4_files, params, wav_dir, feat_dir)
+    train_data_loader = dataset_from_lists(args.train_wav_file, args.train_npy_files, params, wav_dir, feat_dir, is_distributed=False)
+    valid_data_loader = dataset_from_lists(args.valid_wav_file, args.valid_npy_files, params, wav_dir, feat_dir, is_valid=True, is_distributed=False)
     model = WaveGrad(params).cuda()
     _train_impl(0, model, train_data_loader, valid_data_loader, args, params)
 
@@ -284,6 +356,6 @@ def train_distributed(replica_id, replica_count, port, args, params):
 
     wav_dir = os.path.join(args.root_dir, "data")
     feat_dir = os.path.join(args.root_dir, "features")
-    train_data_loader = dataset_from_lists(args.train_wav_files, args.train_mp4_files, params, wav_dir, feat_dir, is_distributed=True)
-    valid_data_loader = dataset_from_lists(args.valid_wav_files, args.valid_mp4_files, params, wav_dir, feat_dir, is_distributed=False, is_valid=True)
+    train_data_loader = dataset_from_lists(args.train_wav_file, args.train_npy_files, params, wav_dir, feat_dir, is_distributed=True)
+    valid_data_loader = dataset_from_lists(args.valid_wav_file, args.valid_npy_files, params, wav_dir, feat_dir, is_distributed=False, is_valid=True)
     _train_impl(replica_id, model, train_data_loader, valid_data_loader, args, params)

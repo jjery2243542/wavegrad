@@ -65,7 +65,7 @@ if __name__ == '__main__':
     #parser.add_argument('spec_dir', help='.npy file directory')
     parser.add_argument('--train_wav_file', help='training .wav file list')
     parser.add_argument('--train_npy_files', nargs="+", help='training .npy file list, should be the order of a,v,av.')
-    oarser.add_argument('--valid_wav_file', help='validation .wav file list')
+    parser.add_argument('--valid_wav_file', help='validation .wav file list')
     parser.add_argument('--valid_npy_files', nargs="+", help='validation .npy file list, should be the order of a,v,av.')
     parser.add_argument('--root_dir', help="root_dir for dataset")
     parser.add_argument('--max_steps', default=None, type=int,

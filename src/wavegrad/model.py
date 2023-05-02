@@ -176,11 +176,6 @@ class WaveGrad(nn.Module):
                 UBlock(128, 128, 2, [1, 2, 4, 8]),
                 UBlock(128, 128, 2, [1, 2, 4, 8]),
             ])
-            av_dim = 1024 if self.params.av_model_size == "large" else 768
-            self.norm = torch.nn.LayerNorm(av_dim)
-            self.first_conv = Conv1d(av_dim, 1024, 1)
-            self.last_conv = Conv1d(128, 1, 3, padding=1)
-
         elif self.params.model_size == "large":
             self.downsample = nn.ModuleList([
                 Conv1d(1, 32, 5, padding=2),
@@ -206,17 +201,23 @@ class WaveGrad(nn.Module):
                 UBlock(1024, 1024, 5, [1, 2, 1, 2]),
                 UBlock(1024, 512, 2, [1, 2, 1, 2]),
                 UBlock(512, 512, 2, [1, 2, 1, 2]),
-                UBlock(512, 256, 2, [1, 2, 1, 2]),
+                UBlock(512, 256, 2, [1, 2, 4, 8]),
                 UBlock(256, 256, 2, [1, 2, 4, 8]),
                 UBlock(256, 128, 2, [1, 2, 4, 8]),
                 UBlock(128, 128, 2, [1, 2, 4, 8]),
                 UBlock(128, 128, 2, [1, 2, 4, 8]),
             ])
+        av_dim = 1024 if self.params.av_model_size == "large" else 768
+
+        if not hasattr(self.params, "cond_norm") or self.params.cond_norm == "ln":
             self.norm = torch.nn.LayerNorm(av_dim)
-            self.first_conv = Conv1d(av_dim, 1024, 1)
-            # a hack to use ln as first_conv to avoid changing forward
-            #self.first_conv = torch.nn.LayerNorm(1024)
-            self.last_conv = Conv1d(128, 1, 3, padding=1)
+        elif self.params.cond_norm == "bn":
+            self.norm = torch.nn.BatchNorm1d(av_dim)
+        else:
+            raise ValueError(f"cond_norm has to be one of [ln, bn], got {self.params.cond_norm}")
+            
+        self.first_conv = Conv1d(av_dim, 1024, 1)
+        self.last_conv = Conv1d(128, 1, 3, padding=1)
 
     def forward(self, audio, spectrogram, noise_scale):
         x = audio.unsqueeze(1)
@@ -224,7 +225,11 @@ class WaveGrad(nn.Module):
         for film, layer in zip(self.film, self.downsample):
             x = layer(x)
             downsampled.append(film(x, noise_scale))
-        spectrogram = self.norm(spectrogram.transpose(1, 2)).transpose(1, 2)
+        if not hasattr(self.params, "cond_norm") or self.params.cond_norm == "ln":
+            spectrogram = self.norm(spectrogram.transpose(1, 2)).transpose(1, 2)
+        elif self.params.cond_norm == "bn":
+            spectrogram = self.norm(spectrogram)
+
         x = self.first_conv(spectrogram)
         for layer, (film_shift, film_scale) in zip(self.upsample, reversed(downsampled)):
             x = layer(x, film_shift, film_scale)

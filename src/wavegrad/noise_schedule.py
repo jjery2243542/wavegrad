@@ -38,13 +38,34 @@ def cosine_beta_schedule(timesteps, s=0.008):
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0.0001, 0.9999)
 
+def sigmoid_beta_schedule(timesteps, start = -3, end = 3, tau = 1, clamp_min = 1e-5):
+    """
+    sigmoid schedule
+    proposed in https://arxiv.org/abs/2212.11972 - Figure 8
+    better for images > 64x64, when used during training
+    """
+    steps = timesteps + 1
+    t = torch.linspace(0, timesteps, steps, dtype = torch.float64) / timesteps
+    v_start = torch.tensor(start / tau).sigmoid()
+    v_end = torch.tensor(end / tau).sigmoid()
+    alphas_cumprod = (-((t * (end - start) + start) / tau).sigmoid() + v_end) / (v_end - v_start)
+    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    return torch.clip(betas, 0, 0.999)
+
 def get_noise_schedule(name):
     if name == "linear":
-        beta = np.linspace(1e-6, 0.01, 1000)
-    elif noise_schedule == "cosine":
+        beta = torch.linspace(1e-6, 0.01, 1000)
+    elif name == "modified_linear":
+        beta = torch.linspace(1e-4, 0.05, 1000)
+    elif name == "cosine":
         beta = cosine_beta_schedule(1000)
+    elif name == "sigmoid":
+        beta = sigmoid_beta_schedule(1000)
+    elif isinstance(name, list):
+        beta = torch.Tensor(name)
     else:
-        raise NotImplementedError(f"{params.noise_schedule} not implemented.")
+        raise NotImplementedError(f"{name} not implemented.")
     return beta
 
 def _round_up(x, multiple):

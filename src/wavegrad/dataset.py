@@ -105,9 +105,9 @@ class NumpyFileDataset(torch.utils.data.Dataset):
         wav_path = self.data[idx]["wav"]
         signal, _ = torchaudio.load(wav_path)
 
-        a_path = self.data["idx"]["a"]
-        v_path = self.data["idx"]["v"]
-        av_path = self.data["idx"]["av"]
+        a_path = self.data[idx]["a"]
+        v_path = self.data[idx]["v"]
+        av_path = self.data[idx]["av"]
 
         a_features = np.load(a_path)
         v_features = np.load(v_path)
@@ -221,7 +221,7 @@ def from_file_lists(wav_file_list, npy_file_lists, params, wav_root_dir, feat_ro
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=params.batch_size if not is_valid else params.valid_batch_size,
-        collate_fn=PathCollator(params).collate,
+        collate_fn=Collator(params).collate,
         shuffle=not is_distributed,
         sampler=DistributedSampler(dataset) if is_distributed else None,
         pin_memory=True,

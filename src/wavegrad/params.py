@@ -41,6 +41,8 @@ params = AttrDict(
     learning_rate=2e-4,
     min_lr=2e-6,
     max_grad_norm=1.0,
+    num_warmup_steps=10000,
+    lr_scheduler="cosine",
 
     # Data params
     sample_rate=16000,
@@ -49,6 +51,8 @@ params = AttrDict(
     frame_rate=25, # frame rate for avhubert 
     max_size=100, 
     av_model_size="large",
+    cond_norm="ln",
+    self_attn=False,
 
     # Model params
     #noise_schedule=np.linspace(1e-6, 0.01, 1000).tolist(),

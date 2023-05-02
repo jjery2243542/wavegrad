@@ -33,7 +33,9 @@ def predict(spectrogram, model_dir=None, params=None, device=torch.device('cuda'
             checkpoint = torch.load(f'{model_dir}/weights.pt')
         else:
             checkpoint = torch.load(model_dir)
-        model = WaveGrad(AttrDict(base_params)).to(device)
+        params = checkpoint["params"]
+        model = WaveGrad(AttrDict(params)).to(device)
+        #model = WaveGrad(AttrDict(base_params)).to(device)
         model.load_state_dict(checkpoint['model'])
         model.eval()
         models[model_dir] = model
@@ -52,7 +54,7 @@ def predict(spectrogram, model_dir=None, params=None, device=torch.device('cuda'
         spectrogram = spectrogram.to(device)
 
         audio = torch.randn(spectrogram.shape[0], model.params.hop_samples * spectrogram.shape[-1], device=device)
-        noise_scale = torch.from_numpy(alpha_cum**0.5).float().unsqueeze(1).to(device)
+        noise_scale = (alpha_cum**0.5).float().unsqueeze(1).to(device)
 
         for n in range(len(alpha) - 1, -1, -1):
             c1 = 1 / alpha[n]**0.5

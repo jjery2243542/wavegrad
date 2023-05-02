@@ -1,9 +1,10 @@
 #!/usr/bin/bash
 #SBATCH --partition=speech-gpu
-#SBATCH -c8
+#SBATCH -c4
 ##SBATCH -C 2080ti
 #SBATCH -o slurm/av2wav/slurm-%j.out
 #SBATCH -e slurm/av2wav/slurm-%j.err
+###SBATCH --open-mode=append
 ###SBATCH --exclude=gpu18
 #SBATCH --signal=B:10@300
 
@@ -12,29 +13,40 @@ eval "$(conda shell.bash hook)"
 conda activate avhubert
 
 data_dir=/scratch/jjery2243542/lip_reading
-tar_path=/share/data/lang/users/jjery2243542/lip_reading/data2.tar.gz
-if [[ ! -d $data_dir || ! -f $data_dir/finished ]]; then
+data_tar_path=/share/data/lang/users/jjery2243542/lip_reading/data2.tar.gz
+feat_tar_path=/share/data/speech/jjery2243542/avhubert/features.tar
+if [[ ! -d $data_dir/data || ! -f $data_dir/finished ]]; then
     echo "untaring"
     if [ ! -d $data_dir ]; then
         mkdir -p $data_dir
     fi 
-    tar -xf $tar_path -C $data_dir
+    tar -xf $data_tar_path -C $data_dir
     touch "$data_dir/finished" 
     echo "finishing untaring"
 fi
 
+if [[ ! -d $data_dir/features || ! -f $data_dir/feat_finished ]]; then
+    echo "untaring features"
+    if [ ! -d $data_dir ]; then
+        mkdir -p $data_dir
+    fi 
+    tar -xf $feat_tar_path -C $data_dir
+    touch "$data_dir/feat_finished" 
+    echo "finishing untaring features"
+fi
+
 #modal=a_v_av
 #size=base
-data_dir=$data_dir/data
-model_dir=/share/data/speech/jjery2243542/lip2speech/av2wav/bs_32/lrs3_vc2/diff_cond/${modal}_${size}
-#model_dir=/share/data/speech/jjery2243542/lip2speech/av2wav/bs_32/lrs3_vc2/diff_cond/test
+model_dir=/share/data/speech/jjery2243542/lip2speech/av2wav/bs_32/lrs3_vc2/filtered/${model}_${max_steps}
 list_dir=/share/data/speech/jjery2243542/avhubert/file_list/splits
 #root_dir=/share/data/lang/users/bshi/lip_reading/data
-max_steps=500000
+max_steps=250000
 
 trap 'echo signal recieved in BATCH!; kill -10 "${PID}"; wait "${PID}";' SIGUSR1
 
-python -m wavegrad $model_dir --train_wav_files $list_dir/audio/train.txt --train_mp4_files $list_dir/video/train.txt --valid_wav_files $list_dir/audio/valid.txt --valid_mp4_files $list_dir/video/valid.txt --root_dir $data_dir --max_steps $max_steps --conf conf/${size}_${modal}.yaml --fp16 & 
+wav_dir=$list_dir/audio/filtered_by_sisdr
+feat_dir=$list_dir/features/filtered_by_sisdr
+python -m wavegrad $model_dir --train_wav_file $wav_dir/train.txt --train_npy_files $feat_dir/a/train.txt $feat_dir/v/train.txt $feat_dir/av/train.txt --valid_wav_file $wav_dir/valid.txt --valid_npy_files $feat_dir/a/valid.txt $feat_dir/v/valid.txt $feat_dir/av/valid.txt --root_dir $data_dir --max_steps $max_steps --conf conf/${model}.yaml --fp16 &
 
 PID="$!"
 echo $PID
