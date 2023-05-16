@@ -195,6 +195,16 @@ class WaveGradLearner:
                 os.unlink(link_name)
             os.symlink(save_basename, link_name)
 
+    def load_from_checkpoint(self, filename):
+        try:
+            checkpoint = torch.load(filename)
+            self.load_state_dict(checkpoint)
+            return True
+        except FileNotFoundError:
+            print(f"{filename} not found")
+            return False
+
+
     def restore_from_checkpoint(self, filename='weights'):
         try:
             checkpoint = torch.load(f'{self.model_dir}/{filename}.pt')
@@ -308,7 +318,8 @@ class WaveGradLearner:
         #writer.add_scalar(f'train/train_loss', train_loss, step)
         #for name, valid_loss in valid_losses.items():
         #    writer.add_scalar(f'train/{name}_valid_loss', valid_loss, step)
-        writer.add_scalar(f'train/grad_norm', self.grad_norm, step)
+        if hasattr(self, "grad_norm"):
+            writer.add_scalar(f'train/grad_norm', self.grad_norm, step)
         writer.add_scalar(f'train/lr', self.scheduler.get_last_lr()[0], step)
         writer.flush()
         self.summary_writer = writer
@@ -320,16 +331,20 @@ def _train_impl(replica_id, model, train_dataset, valid_dataset, args, params):
     if not hasattr(params, "lr_scheduler") or params.lr_scheduler == "cosine":
         scheduler = CosineAnnealingLR(opt, T_max=args.max_steps, eta_min=params.min_lr)
     elif params.lr_scheduler == "cosine_w_warmup":
-        print("usng cosine_w_warmup")
         scheduler = get_cosine_schedule_with_warmup(opt, num_warmup_steps=params.num_warmup_steps, num_training_steps=args.max_steps)
-    else:
+    elif params.lr_scheduler == "constant_w_warmup":
         scheduler = get_constant_schedule_with_warmup(opt, num_warmup_steps=params.num_warmup_steps) 
+    else:
+        raise NotImplementedError(f"lr scheduler {params.lr_scheduler} not implemented.")
 
     learner = WaveGradLearner(replica_id, args.model_dir, model, train_dataset, valid_dataset, opt, scheduler, params, fp16=args.fp16)
     learner.is_master = (replica_id == 0)
 
     handler = SignalHandler(learner)
     signal.signal(signal.SIGUSR1, handler.handle)
+
+    if args.ckpt is not None:
+        learner.load_from_checkpoint(args.ckpt)
 
     learner.restore_from_checkpoint()
     learner.train(max_steps=args.max_steps)

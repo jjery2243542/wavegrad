@@ -62,7 +62,7 @@ def get_noise_schedule(name):
         beta = cosine_beta_schedule(1000)
     elif name == "sigmoid":
         beta = sigmoid_beta_schedule(1000)
-    elif isinstance(name, list):
+    elif isinstance(name, list) or isinstance(name, np.ndarray) or isinstance(name, torch.Tensor):
         beta = torch.Tensor(name)
     else:
         raise NotImplementedError(f"{name} not implemented.")

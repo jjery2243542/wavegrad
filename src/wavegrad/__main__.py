@@ -71,6 +71,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_steps', default=None, type=int,
         help='maximum number of training steps')
     parser.add_argument('--conf', default=None, help="the overide conf (.yaml)")
+    parser.add_argument('--ckpt', default=None, help="checkpoint path.")
     parser.add_argument('--fp16', action='store_true', default=False,
         help='use 16-bit floating point operations for training')
     main(parser.parse_args())

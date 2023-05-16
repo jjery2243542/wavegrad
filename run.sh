@@ -1,6 +1,7 @@
-#!/usr/bin/bash
+#!/usr/bin/zsh
 #SBATCH --partition=speech-gpu
-#SBATCH -c4
+##SBATCH --partition=cpu
+#SBATCH -c2
 ##SBATCH -C 2080ti
 #SBATCH -o slurm/av2wav/slurm-%j.out
 #SBATCH -e slurm/av2wav/slurm-%j.err
@@ -37,11 +38,11 @@ fi
 
 #modal=a_v_av
 #size=base
-model_dir=/share/data/speech/jjery2243542/lip2speech/av2wav/bs_32/lrs3_vc2/filtered/${model}_${max_steps}
+model_dir=/share/data/speech/jjery2243542/lip2speech/av2wav/bs_32/lrs3_vc2/filtered/1M/${model}
 list_dir=/share/data/speech/jjery2243542/avhubert/file_list/splits
 #root_dir=/share/data/lang/users/bshi/lip_reading/data
-max_steps=250000
-
+max_steps=1000000
+echo $model
 trap 'echo signal recieved in BATCH!; kill -10 "${PID}"; wait "${PID}";' SIGUSR1
 
 wav_dir=$list_dir/audio/filtered_by_sisdr

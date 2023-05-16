@@ -53,6 +53,7 @@ params = AttrDict(
     av_model_size="large",
     cond_norm="ln",
     self_attn=False,
+    num_heads=4, 
 
     # Model params
     #noise_schedule=np.linspace(1e-6, 0.01, 1000).tolist(),
