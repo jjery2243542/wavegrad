@@ -173,13 +173,14 @@ class WaveGradLearner:
             'scaler': self.scaler.state_dict(),
         }
 
-    def load_state_dict(self, state_dict):
+    def load_state_dict(self, state_dict, load_scheduler=True):
         if hasattr(self.model, 'module') and isinstance(self.model.module, nn.Module):
             self.model.module.load_state_dict(state_dict['model'])
         else:
             self.model.load_state_dict(state_dict['model'])
         self.optimizer.load_state_dict(state_dict['optimizer'])
-        self.scheduler.load_state_dict(state_dict["scheduler"])
+        if load_scheduler:
+            self.scheduler.load_state_dict(state_dict["scheduler"])
         self.scaler.load_state_dict(state_dict['scaler'])
         self.step = state_dict['step']
 
@@ -195,10 +196,11 @@ class WaveGradLearner:
                 os.unlink(link_name)
             os.symlink(save_basename, link_name)
 
-    def load_from_checkpoint(self, filename):
+    def load_from_checkpoint(self, filename, load_scheduler=True):
         try:
             checkpoint = torch.load(filename)
-            self.load_state_dict(checkpoint)
+            # if fine-tuning, don't load
+            self.load_state_dict(checkpoint, load_scheduler=load_scheduler)
             return True
         except FileNotFoundError:
             print(f"{filename} not found")
@@ -308,6 +310,7 @@ class WaveGradLearner:
             self.scaler.step(self.optimizer)
             self.scaler.update()
             self.scheduler.step()
+            #print("lr", self.scheduler.get_last_lr()[0])
         return loss
 
     def _write_summary(self, step, features, losses):
@@ -344,16 +347,21 @@ def _train_impl(replica_id, model, train_dataset, valid_dataset, args, params):
     signal.signal(signal.SIGUSR1, handler.handle)
 
     if args.ckpt is not None:
-        learner.load_from_checkpoint(args.ckpt)
+        # in fine-tuning case, don't load the scheduler
+        learner.load_from_checkpoint(args.ckpt, load_scheduler=False)
+        learner.scheduler.last_epoch = 0
+        learner.step = 0
 
-    learner.restore_from_checkpoint()
+    restore_success = learner.restore_from_checkpoint()
     learner.train(max_steps=args.max_steps)
 
 
 def train(args, params):
-    wav_dir = os.path.join(args.root_dir, "data")
-    feat_dir = os.path.join(args.root_dir, "features")
+    wav_dir = os.path.join(args.train_root_dir, "data")
+    feat_dir = os.path.join(args.train_root_dir, "features")
     train_data_loader = dataset_from_lists(args.train_wav_file, args.train_npy_files, params, wav_dir, feat_dir, is_distributed=False)
+    wav_dir = os.path.join(args.valid_root_dir, "data")
+    feat_dir = os.path.join(args.valid_root_dir, "features")
     valid_data_loader = dataset_from_lists(args.valid_wav_file, args.valid_npy_files, params, wav_dir, feat_dir, is_valid=True, is_distributed=False)
     model = WaveGrad(params).cuda()
     _train_impl(0, model, train_data_loader, valid_data_loader, args, params)
@@ -369,8 +377,10 @@ def train_distributed(replica_id, replica_count, port, args, params):
     model = WaveGrad(params).to(device)
     model = DistributedDataParallel(model, device_ids=[replica_id])
 
-    wav_dir = os.path.join(args.root_dir, "data")
-    feat_dir = os.path.join(args.root_dir, "features")
+    wav_dir = os.path.join(args.train_root_dir, "data")
+    feat_dir = os.path.join(args.train_root_dir, "features")
     train_data_loader = dataset_from_lists(args.train_wav_file, args.train_npy_files, params, wav_dir, feat_dir, is_distributed=True)
+    wav_dir = os.path.join(args.valid_root_dir, "data")
+    feat_dir = os.path.join(args.valid_root_dir, "features")
     valid_data_loader = dataset_from_lists(args.valid_wav_file, args.valid_npy_files, params, wav_dir, feat_dir, is_distributed=False, is_valid=True)
     _train_impl(replica_id, model, train_data_loader, valid_data_loader, args, params)

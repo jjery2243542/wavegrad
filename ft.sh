@@ -13,9 +13,10 @@ source ~/.zshrc
 eval "$(conda shell.bash hook)"
 conda activate avhubert
 
-data_dir=/scratch/jjery2243542/lip_reading
-data_tar_path=/share/data/lang/users/jjery2243542/lip_reading/data2.tar.gz
-feat_tar_path=/share/data/speech/jjery2243542/avhubert/features.tar
+data_dir=/scratch/jjery2243542/lip_reading/vctk
+data_tar_path=/share/data/speech/jjery2243542/data/vctk/resampled_16khz/vctk_data.tar
+feat_tar_path=/share/data/speech/jjery2243542/avhubert/features/vctk_feature.tar
+
 if [[ ! -d $data_dir/data || ! -f $data_dir/finished ]]; then
     echo "untaring"
     if [ ! -d $data_dir ]; then
@@ -32,22 +33,25 @@ if [[ ! -d $data_dir/features || ! -f $data_dir/feat_finished ]]; then
         mkdir -p $data_dir
     fi 
     tar -xf $feat_tar_path -C $data_dir
+    mv $data_dir/vctk $data_dir/features
     touch "$data_dir/feat_finished" 
     echo "finishing untaring features"
 fi
 
 #modal=a_v_av
 #size=base
-model_dir=/share/data/speech/jjery2243542/lip2speech/av2wav/bs_32/lrs3_vc2/filtered/1M/${model}
-list_dir=/share/data/speech/jjery2243542/avhubert/file_list/splits
+model_dir=/share/data/speech/jjery2243542/lip2speech/av2wav/bs_32/lrs3_vc2/filtered/1M/finetuned/${model}
+list_dir=/share/data/speech/jjery2243542/avhubert/file_list/vctk
 #root_dir=/share/data/lang/users/bshi/lip_reading/data
-max_steps=1000000
+max_steps=50000
 echo $model
 trap 'echo signal recieved in BATCH!; kill -10 "${PID}"; wait "${PID}";' SIGUSR1
 
-wav_dir=$list_dir/audio/filtered_by_sisdr
-feat_dir=$list_dir/features/filtered_by_sisdr
-python -m wavegrad $model_dir --train_wav_file $wav_dir/train.txt --train_npy_files $feat_dir/a/train.txt $feat_dir/v/train.txt $feat_dir/av/train.txt --valid_wav_file $wav_dir/valid.txt --valid_npy_files $feat_dir/a/valid.txt $feat_dir/v/valid.txt $feat_dir/av/valid.txt --train_root_dir $data_dir --valid_root_dir $data_dir --max_steps $max_steps --conf conf/${model}.yaml --fp16 &
+wav_dir=$list_dir/audio
+feat_dir=$list_dir/features
+
+ckpt=/share/data/speech/jjery2243542/lip2speech/av2wav/bs_32/lrs3_vc2/filtered/1M/large_lr_1e-4_warmup/weights-999999.pt
+python -m wavegrad $model_dir --train_wav_file $wav_dir/train.txt --train_npy_files $feat_dir/train.txt $feat_dir/train.txt $feat_dir/train.txt --valid_wav_file $list_dir/../audio/valid.txt --valid_npy_files $list_dir/../features/a/valid.txt $list_dir/../features/v/valid.txt $list_dir/../features/av/valid.txt --train_root_dir $data_dir --valid_root_dir $data_dir/../ --max_steps $max_steps --conf conf/finetune_vctk/${model}.yaml --fp16 --ckpt $ckpt &
 
 PID="$!"
 echo $PID
