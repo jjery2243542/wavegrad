@@ -40,7 +40,7 @@ fi
 
 #modal=a_v_av
 #size=base
-model_dir=/share/data/speech/jjery2243542/lip2speech/av2wav/bs_32/lrs3_vc2/filtered/1M/finetuned/${model}
+model_dir=/share/data/speech/jjery2243542/lip2speech/av2wav/bs_32/lrs3_vc2/filtered_v2/1M/finetuned/${model}
 list_dir=/share/data/speech/jjery2243542/avhubert/file_list/vctk
 #root_dir=/share/data/lang/users/bshi/lip_reading/data
 max_steps=50000
@@ -50,8 +50,11 @@ trap 'echo signal recieved in BATCH!; kill -10 "${PID}"; wait "${PID}";' SIGUSR1
 wav_dir=$list_dir/audio
 feat_dir=$list_dir/features
 
-ckpt=/share/data/speech/jjery2243542/lip2speech/av2wav/bs_32/lrs3_vc2/filtered/1M/large_lr_1e-4_warmup/weights-999999.pt
-python -m wavegrad $model_dir --train_wav_file $wav_dir/train.txt --train_npy_files $feat_dir/train.txt $feat_dir/train.txt $feat_dir/train.txt --valid_wav_file $list_dir/../audio/valid.txt --valid_npy_files $list_dir/../features/a/valid.txt $list_dir/../features/v/valid.txt $list_dir/../features/av/valid.txt --train_root_dir $data_dir --valid_root_dir $data_dir/../ --max_steps $max_steps --conf conf/finetune_vctk/${model}.yaml --fp16 --ckpt $ckpt &
+valid_audio_list_dir=/share/data/speech/jjery2243542/avhubert/file_list/splits/audio/filtered_by_sisdr_23
+valid_feat_list_dir=/share/data/speech/jjery2243542/avhubert/file_list/splits/features/filtered_by_sisdr_23
+
+ckpt=/share/data/speech/jjery2243542/lip2speech/av2wav/bs_32/lrs3_vc2/filtered_v2/1M/large_lr_1e-4_warmup_xlarge2/weights-999999.pt
+python -m wavegrad $model_dir --train_wav_file $wav_dir/train.txt --train_npy_files $feat_dir/train.txt $feat_dir/train.txt $feat_dir/train.txt --valid_wav_file $valid_audio_list_dir/valid.txt --valid_npy_files $valid_feat_list_dir/a/valid.txt $valid_feat_list_dir/v/valid.txt $valid_feat_list_dir/av/valid.txt --train_root_dir $data_dir --valid_root_dir $data_dir/../ --max_steps $max_steps --conf conf/finetune_vctk/${model}.yaml --fp16 --ckpt $ckpt &
 
 PID="$!"
 echo $PID
