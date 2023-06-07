@@ -203,7 +203,7 @@ class Collator:
         }
 
         if cond_labels is not None:
-            output_dict["cond_labels"] = cond_labels
+            output_dict["cond_labels"] = torch.from_numpy(cond_labels)
 
         return output_dict
 

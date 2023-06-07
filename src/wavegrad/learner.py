@@ -230,7 +230,11 @@ class WaveGradLearner:
             else:
                 features = batch["av_features"]
 
-            loss = self.valid_step(features, audio)
+            if self.params.cond is None:
+                loss = self.valid_step(features, audio)
+            else:
+                loss = self.valid_step(features, audio, batch["cond_labels"])
+
             loss_sum += loss.cpu().item()
             count += 1
         return loss_sum / count
@@ -245,7 +249,11 @@ class WaveGradLearner:
 
                 # sample for a, v, av
                 features = sample(batch["a_features"], batch["v_features"], batch["av_features"], sample_probs=self.params.sample_probs)
-                loss = self.train_step(features, batch["audio"])
+
+                if self.params.cond is None:
+                    loss = self.train_step(features, batch["audio"])
+                else:
+                    loss = self.train_step(features, batch["audio"], batch["cond_labels"])
 
                 #if torch.isnan(loss).any():
                 #    raise runtimeerror(f'detected nan loss at step {self.step}.')
@@ -260,7 +268,7 @@ class WaveGradLearner:
                         self.save_to_checkpoint()
                 self.step += 1
 
-    def valid_step(self, features, audio):
+    def valid_step(self, features, audio, cond=None):
         #audio = features['audio']
         #spectrogram = features['spectrogram']
 
@@ -277,11 +285,11 @@ class WaveGradLearner:
             noise = torch.randn_like(audio)
             noisy_audio = noise_scale * audio + (1.0 - noise_scale**2)**0.5 * noise
 
-            predicted = self.model(noisy_audio, features, noise_scale.squeeze(1))
+            predicted = self.model(noisy_audio, features, noise_scale.squeeze(1), cond=cond)
             loss = self.loss_fn(noise, predicted.squeeze(1))
         return loss
 
-    def train_step(self, features, audio):
+    def train_step(self, features, audio, cond=None):
         for param in self.model.parameters():
             param.grad = None
 
@@ -301,7 +309,7 @@ class WaveGradLearner:
             noise = torch.randn_like(audio)
             noisy_audio = noise_scale * audio + (1.0 - noise_scale**2)**0.5 * noise
 
-            predicted = self.model(noisy_audio, features, noise_scale.squeeze(1))
+            predicted = self.model(noisy_audio, features, noise_scale.squeeze(1), cond=cond)
             loss = self.loss_fn(noise, predicted.squeeze(1))
 
         if not torch.isnan(loss).any():

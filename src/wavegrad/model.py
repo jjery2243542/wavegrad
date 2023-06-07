@@ -288,11 +288,11 @@ class WaveGrad(nn.Module):
             ])
             if self.params.cond:
                 self.cond_film = nn.ModuleList([
-                    CondFiLM(32, 128, self.params.num_cond),
+                    CondFiLM(32, 32, self.params.num_cond),
                     CondFiLM(128, 128, self.params.num_cond),
                     CondFiLM(128, 128, self.params.num_cond),
-                    CondFiLM(128, 256, self.params.num_cond),
-                    CondFiLM(256, 512, self.params.num_cond),
+                    CondFiLM(128, 128, self.params.num_cond),
+                    CondFiLM(256, 256, self.params.num_cond),
                     CondFiLM(512, 512, self.params.num_cond),
                 ])
             self.upsample = nn.ModuleList([
@@ -326,14 +326,14 @@ class WaveGrad(nn.Module):
             ])
             if self.params.cond:
                 self.cond_film = nn.ModuleList([
-                    CondFiLM(32, 128, self.params.num_cond),
+                    CondFiLM(32, 32, self.params.num_cond),
                     CondFiLM(128, 128, self.params.num_cond),
                     CondFiLM(128, 128, self.params.num_cond),
-                    CondFiLM(128, 256, self.params.num_cond),
+                    CondFiLM(128, 128, self.params.num_cond),
                     CondFiLM(256, 256, self.params.num_cond),
-                    CondFiLM(256, 512, self.params.num_cond),
+                    CondFiLM(256, 256, self.params.num_cond),
                     CondFiLM(512, 512, self.params.num_cond),
-                    CondFiLM(512, 1024, self.params.num_cond),
+                    CondFiLM(512, 512, self.params.num_cond),
                 ])
             self.upsample = nn.ModuleList([
                 UBlock(1024, 1024, 5, [1, 2, 1, 2]),
@@ -368,14 +368,14 @@ class WaveGrad(nn.Module):
             ])
             if self.params.cond:
                 self.cond_film = nn.ModuleList([
-                    CondFiLM(32, 128, self.params.num_cond),
+                    CondFiLM(32, 32, self.params.num_cond),
                     CondFiLM(128, 128, self.params.num_cond),
                     CondFiLM(128, 128, self.params.num_cond),
-                    CondFiLM(128, 256, self.params.num_cond),
+                    CondFiLM(128, 128, self.params.num_cond),
                     CondFiLM(256, 256, self.params.num_cond),
-                    CondFiLM(256, 512, self.params.num_cond),
+                    CondFiLM(256, 256, self.params.num_cond),
                     CondFiLM(512, 512, self.params.num_cond),
-                    CondFiLM(512, 1024, self.params.num_cond),
+                    CondFiLM(512, 512, self.params.num_cond),
                 ])
             self.upsample = nn.ModuleList([
                 UBlock(1024, 1024, 5, [1, 2, 1, 2]),
@@ -410,14 +410,14 @@ class WaveGrad(nn.Module):
             ])
             if self.params.cond:
                 self.cond_film = nn.ModuleList([
-                    CondFiLM(32, 128, self.params.num_cond),
+                    CondFiLM(32, 32, self.params.num_cond),
                     CondFiLM(128, 128, self.params.num_cond),
                     CondFiLM(128, 128, self.params.num_cond),
-                    CondFiLM(128, 256, self.params.num_cond),
+                    CondFiLM(128, 128, self.params.num_cond),
                     CondFiLM(256, 256, self.params.num_cond),
-                    CondFiLM(256, 512, self.params.num_cond),
+                    CondFiLM(256, 256, self.params.num_cond),
                     CondFiLM(512, 512, self.params.num_cond),
-                    CondFiLM(512, 1024, self.params.num_cond),
+                    CondFiLM(512, 512, self.params.num_cond),
                 ])
             self.upsample = nn.ModuleList([
                 LUBlock(1024, 1024, 5, [1, 2, 1, 2, 4]),
@@ -512,7 +512,7 @@ class WaveGrad(nn.Module):
     def forward(self, audio, spectrogram, noise_scale, cond=None):
         x = audio.unsqueeze(1)
         downsampled = []
-        if cond:
+        if cond is not None:
             for film, cond_film, layer in zip(self.film, self.cond_film, self.downsample):
                 x = layer(x)
                 x = cond_film(x, cond)
