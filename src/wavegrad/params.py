@@ -52,6 +52,8 @@ params = AttrDict(
     max_size=100, 
     av_model_size="large",
     cond_norm="ln",
+    cond=False, 
+    num_cond=2,
     self_attn=False,
     num_heads=4, 
 

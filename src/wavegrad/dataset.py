@@ -84,18 +84,26 @@ class PathDataset(torch.utils.data.Dataset):
         }
 
 class NumpyFileDataset(torch.utils.data.Dataset):
-    def __init__(self, wav_file_list, npy_file_lists, wav_root_dir, feat_root_dir):
+    def __init__(self, wav_file_list, npy_file_lists, wav_root_dir, feat_root_dir, cond_labels=None):
         # npy_files in an order of a, v, av
         super().__init__()
 
         self.data = []
+
+        self.cond_labels = cond_labels
+        if cond_labels is not None:
+            with open(cond_labels) as f:
+                labels = [int(line.strip()) for line in f]
+
         with open(wav_file_list) as f_wav, open(npy_file_lists[0]) as f_a, open(npy_file_lists[1]) as f_v, open(npy_file_lists[2]) as f_av:
-            for wav_line, a_line, v_line, av_line in zip(f_wav, f_a, f_v, f_av):
+            for i, (wav_line, a_line, v_line, av_line) in enumerate(zip(f_wav, f_a, f_v, f_av)):
                 data_dict = {"wav": os.path.join(wav_root_dir, wav_line.strip()), 
                         "a": os.path.join(feat_root_dir, a_line.strip()), 
                         "v": os.path.join(feat_root_dir, v_line.strip()), 
                         "av": os.path.join(feat_root_dir, av_line.strip()),
                     }
+                if cond_labels:
+                    data_dict["cond_label"] = labels[i]
                 self.data.append(data_dict)
 
     def __len__(self):
@@ -118,14 +126,18 @@ class NumpyFileDataset(torch.utils.data.Dataset):
         a_features = a_features[:min_len, :]
         v_features = v_features[:min_len, :]
         av_features = av_features[:min_len, :]
-
-        return {
+        output_dict = {
             'filename': wav_path,
             'audio': signal[0],
             'a_features': a_features,
             'v_features': v_features,
             'av_features': av_features,
         }
+
+        if self.cond_labels:
+            output_dict["cond_label"] = self.data[idx]["cond_label"]
+
+        return output_dict
 
 class NumpyDataset(torch.utils.data.Dataset):
     def __init__(self, paths, spec_dir):
@@ -177,12 +189,23 @@ class Collator:
         a_features = np.stack([record['a_features'] for record in minibatch if 'audio' in record])
         v_features = np.stack([record['v_features'] for record in minibatch if 'audio' in record])
         av_features = np.stack([record['av_features'] for record in minibatch if 'audio' in record])
-        return {
+
+        if "cond_label" in minibatch[0]:
+            cond_labels = np.stack([record["cond_label"] for record in minibatch if "audio" in record])
+        else:
+            cond_labels = None
+
+        output_dict = {
             'audio': torch.from_numpy(audio),
             'a_features': torch.from_numpy(a_features),
             'v_features': torch.from_numpy(v_features),
             'av_features': torch.from_numpy(av_features),
         }
+
+        if cond_labels is not None:
+            output_dict["cond_labels"] = cond_labels
+
+        return output_dict
 
 class PathCollator(Collator):
     def collate(self, minibatch):
@@ -216,8 +239,8 @@ def crop_features(params, features, audios, audio_starts, audio_size):
     audio = torch.stack(cropped["audio"], dim=0)
     return features, audio
 
-def from_file_lists(wav_file_list, npy_file_lists, params, wav_root_dir, feat_root_dir, is_distributed=False, is_valid=False):
-    dataset = NumpyFileDataset(wav_file_list, npy_file_lists, wav_root_dir, feat_root_dir)
+def from_file_lists(wav_file_list, npy_file_lists, params, wav_root_dir, feat_root_dir, cond_labels=None, is_distributed=False, is_valid=False):
+    dataset = NumpyFileDataset(wav_file_list, npy_file_lists, wav_root_dir, feat_root_dir, cond_labels=cond_labels)
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=params.batch_size if not is_valid else params.valid_batch_size,

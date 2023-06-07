@@ -82,6 +82,31 @@ class PositionalEncoding(nn.Module):
         encoding = torch.cat([torch.sin(encoding), torch.cos(encoding)], dim=-1)
         return encoding
 
+class CondFiLM(nn.Module):
+    def __init__(self, input_size, output_size, num_embs):
+        super().__init__()
+        self.emb = nn.Embedding(num_embs, input_size)
+        self.input_conv = nn.Conv1d(input_size, input_size, 3, padding=1)
+        self.output_conv = nn.Conv1d(input_size, output_size, 3, padding=1)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.emb.weight)
+        nn.init.xavier_uniform_(self.input_conv.weight)
+        nn.init.xavier_uniform_(self.output_conv.weight)
+        nn.init.zeros_(self.input_conv.bias)
+        nn.init.zeros_(self.output_conv.bias)
+
+    def forward(self, x, cond):
+        x = self.input_conv(x)
+        x = F.leaky_relu(x, 0.2)
+        #x = self.encoding(x, noise_scale)
+        emb = self.emb(cond)
+        x = x + emb.unsqueeze(dim=2)
+        y = self.output_conv(x)
+        return y
+
+
 
 class FiLM(nn.Module):
     def __init__(self, input_size, output_size):
@@ -261,6 +286,15 @@ class WaveGrad(nn.Module):
                 FiLM(256, 512),
                 FiLM(512, 512),
             ])
+            if self.params.cond:
+                self.cond_film = nn.ModuleList([
+                    CondFiLM(32, 128, self.params.num_cond),
+                    CondFiLM(128, 128, self.params.num_cond),
+                    CondFiLM(128, 128, self.params.num_cond),
+                    CondFiLM(128, 256, self.params.num_cond),
+                    CondFiLM(256, 512, self.params.num_cond),
+                    CondFiLM(512, 512, self.params.num_cond),
+                ])
             self.upsample = nn.ModuleList([
                 UBlock(1024, 512, 5, [1, 2, 1, 2]),
                 UBlock(512, 512, 4, [1, 2, 1, 2]),
@@ -290,6 +324,17 @@ class WaveGrad(nn.Module):
                 FiLM(512, 512),
                 FiLM(512, 1024),
             ])
+            if self.params.cond:
+                self.cond_film = nn.ModuleList([
+                    CondFiLM(32, 128, self.params.num_cond),
+                    CondFiLM(128, 128, self.params.num_cond),
+                    CondFiLM(128, 128, self.params.num_cond),
+                    CondFiLM(128, 256, self.params.num_cond),
+                    CondFiLM(256, 256, self.params.num_cond),
+                    CondFiLM(256, 512, self.params.num_cond),
+                    CondFiLM(512, 512, self.params.num_cond),
+                    CondFiLM(512, 1024, self.params.num_cond),
+                ])
             self.upsample = nn.ModuleList([
                 UBlock(1024, 1024, 5, [1, 2, 1, 2]),
                 UBlock(1024, 512, 2, [1, 2, 1, 2]),
@@ -321,6 +366,17 @@ class WaveGrad(nn.Module):
                 FiLM(512, 512),
                 FiLM(512, 1024),
             ])
+            if self.params.cond:
+                self.cond_film = nn.ModuleList([
+                    CondFiLM(32, 128, self.params.num_cond),
+                    CondFiLM(128, 128, self.params.num_cond),
+                    CondFiLM(128, 128, self.params.num_cond),
+                    CondFiLM(128, 256, self.params.num_cond),
+                    CondFiLM(256, 256, self.params.num_cond),
+                    CondFiLM(256, 512, self.params.num_cond),
+                    CondFiLM(512, 512, self.params.num_cond),
+                    CondFiLM(512, 1024, self.params.num_cond),
+                ])
             self.upsample = nn.ModuleList([
                 UBlock(1024, 1024, 5, [1, 2, 1, 2]),
                 UBlock(1024, 512, 2, [1, 2, 1, 2]),
@@ -352,6 +408,17 @@ class WaveGrad(nn.Module):
                 FiLM(512, 512),
                 FiLM(512, 1024),
             ])
+            if self.params.cond:
+                self.cond_film = nn.ModuleList([
+                    CondFiLM(32, 128, self.params.num_cond),
+                    CondFiLM(128, 128, self.params.num_cond),
+                    CondFiLM(128, 128, self.params.num_cond),
+                    CondFiLM(128, 256, self.params.num_cond),
+                    CondFiLM(256, 256, self.params.num_cond),
+                    CondFiLM(256, 512, self.params.num_cond),
+                    CondFiLM(512, 512, self.params.num_cond),
+                    CondFiLM(512, 1024, self.params.num_cond),
+                ])
             self.upsample = nn.ModuleList([
                 LUBlock(1024, 1024, 5, [1, 2, 1, 2, 4]),
                 LUBlock(1024, 512, 2, [1, 2, 1, 2, 4]),
@@ -442,12 +509,19 @@ class WaveGrad(nn.Module):
         self.first_conv = Conv1d(av_dim, 1024, 1)
         self.last_conv = Conv1d(128, 1, 3, padding=1)
 
-    def forward(self, audio, spectrogram, noise_scale):
+    def forward(self, audio, spectrogram, noise_scale, cond=None):
         x = audio.unsqueeze(1)
         downsampled = []
-        for film, layer in zip(self.film, self.downsample):
-            x = layer(x)
-            downsampled.append(film(x, noise_scale))
+        if cond:
+            for film, cond_film, layer in zip(self.film, self.cond_film, self.downsample):
+                x = layer(x)
+                x = cond_film(x, cond)
+                downsampled.append(film(x, noise_scale))
+        else:
+            for film, layer in zip(self.film, self.downsample):
+                x = layer(x)
+                downsampled.append(film(x, noise_scale))
+
         if not hasattr(self.params, "cond_norm") or self.params.cond_norm == "ln":
             spectrogram = self.norm(spectrogram.transpose(1, 2)).transpose(1, 2)
         elif self.params.cond_norm == "bn":

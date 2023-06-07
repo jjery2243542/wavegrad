@@ -360,10 +360,10 @@ def _train_impl(replica_id, model, train_dataset, valid_dataset, args, params):
 def train(args, params):
     wav_dir = os.path.join(args.train_root_dir, "data")
     feat_dir = os.path.join(args.train_root_dir, "features")
-    train_data_loader = dataset_from_lists(args.train_wav_file, args.train_npy_files, params, wav_dir, feat_dir, is_distributed=False)
+    train_data_loader = dataset_from_lists(args.train_wav_file, args.train_npy_files, params, wav_dir, feat_dir, cond_labels=args.train_cond, is_distributed=False)
     wav_dir = os.path.join(args.valid_root_dir, "data")
     feat_dir = os.path.join(args.valid_root_dir, "features")
-    valid_data_loader = dataset_from_lists(args.valid_wav_file, args.valid_npy_files, params, wav_dir, feat_dir, is_valid=True, is_distributed=False)
+    valid_data_loader = dataset_from_lists(args.valid_wav_file, args.valid_npy_files, params, wav_dir, feat_dir, cond_labels=args.valid_cond, is_valid=True, is_distributed=False)
     model = WaveGrad(params).cuda()
     _train_impl(0, model, train_data_loader, valid_data_loader, args, params)
 
@@ -380,8 +380,8 @@ def train_distributed(replica_id, replica_count, port, args, params):
 
     wav_dir = os.path.join(args.train_root_dir, "data")
     feat_dir = os.path.join(args.train_root_dir, "features")
-    train_data_loader = dataset_from_lists(args.train_wav_file, args.train_npy_files, params, wav_dir, feat_dir, is_distributed=True)
+    train_data_loader = dataset_from_lists(args.train_wav_file, args.train_npy_files, params, wav_dir, feat_dir, cond_labels=args.train_cond, is_distributed=True)
     wav_dir = os.path.join(args.valid_root_dir, "data")
     feat_dir = os.path.join(args.valid_root_dir, "features")
-    valid_data_loader = dataset_from_lists(args.valid_wav_file, args.valid_npy_files, params, wav_dir, feat_dir, is_distributed=False, is_valid=True)
+    valid_data_loader = dataset_from_lists(args.valid_wav_file, args.valid_npy_files, params, wav_dir, feat_dir, cond_labels=args.valid_cond, is_distributed=False, is_valid=True)
     _train_impl(replica_id, model, train_data_loader, valid_data_loader, args, params)

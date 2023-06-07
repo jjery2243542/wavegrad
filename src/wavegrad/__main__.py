@@ -67,6 +67,8 @@ if __name__ == '__main__':
     parser.add_argument('--train_npy_files', nargs="+", help='training .npy file list, should be the order of a,v,av.')
     parser.add_argument('--valid_wav_file', help='validation .wav file list')
     parser.add_argument('--valid_npy_files', nargs="+", help='validation .npy file list, should be the order of a,v,av.')
+    parser.add_argument('--train_cond', default=None, help='training condition')
+    parser.add_argument('--valid_cond', default=None, help='valid condition')
     parser.add_argument('--train_root_dir', help="root_dir for training set")
     parser.add_argument('--valid_root_dir', help="root_dir for validation set")
     parser.add_argument('--max_steps', default=None, type=int,
