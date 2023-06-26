@@ -19,13 +19,14 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import glob
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.tensorboard import SummaryWriter
 #from tensorboard import SummaryWriter
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 from tqdm import tqdm
+import re
 
 from wavegrad.dataset import from_path as dataset_from_path
 from wavegrad.dataset import from_file_lists as dataset_from_lists
@@ -35,6 +36,17 @@ from wavegrad.noise_schedule import get_noise_schedule
 
 import sys
 import signal
+
+def extract_number(file_path):
+    # Extract the file name from the path
+    file_name = file_path.split('/')[-1]
+    
+    # Extract the numeric part using regular expression
+    match = re.search(r'\d+', file_name)
+    if match:
+        return int(match.group())
+    else:
+        return 0
 
 def _nested_map(struct, map_fn):
     if isinstance(struct, tuple):
@@ -185,11 +197,17 @@ class WaveGradLearner:
         self.scaler.load_state_dict(state_dict['scaler'])
         self.step = state_dict['step']
 
-    def save_to_checkpoint(self, filename='weights'):
+    def save_to_checkpoint(self, filename='weights', max_ckpts=5):
         save_basename = f'{filename}-{self.step}.pt'
         save_name = f'{self.model_dir}/{save_basename}'
         link_name = f'{self.model_dir}/{filename}.pt'
         torch.save(self.state_dict(), save_name)
+
+        ckpts = sorted(glob.glob(f"{self.model_dir}/{filename}-*.pt"), key=extract_number)
+        if len(ckpts) > max_ckpts:
+            for ckpt in ckpts[:len(ckpts) - max_ckpts]:
+                os.remove(ckpt)
+
         if os.name == 'nt':
             torch.save(self.state_dict(), link_name)
         else:
@@ -230,7 +248,7 @@ class WaveGradLearner:
             else:
                 features = batch["av_features"]
 
-            if self.params.cond is None:
+            if not hasattr(self.params, "cond") or not self.params.cond:
                 loss = self.valid_step(features, audio)
             else:
                 loss = self.valid_step(features, audio, batch["cond_labels"])
@@ -250,7 +268,7 @@ class WaveGradLearner:
                 # sample for a, v, av
                 features = sample(batch["a_features"], batch["v_features"], batch["av_features"], sample_probs=self.params.sample_probs)
 
-                if self.params.cond is None:
+                if not hasattr(self.params, "cond") or not self.params.cond:
                     loss = self.train_step(features, batch["audio"])
                 else:
                     loss = self.train_step(features, batch["audio"], batch["cond_labels"])

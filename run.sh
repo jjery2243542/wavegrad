@@ -11,7 +11,7 @@
 
 source ~/.zshrc
 eval "$(conda shell.bash hook)"
-conda activate wg2.0
+conda activate avhubert
 
 data_dir=/scratch/jjery2243542/lip_reading
 data_tar_path=/share/data/lang/users/jjery2243542/lip_reading/data2.tar.gz

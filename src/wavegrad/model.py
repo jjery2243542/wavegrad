@@ -286,7 +286,7 @@ class WaveGrad(nn.Module):
                 FiLM(256, 512),
                 FiLM(512, 512),
             ])
-            if self.params.cond:
+            if hasattr(self.params, "cond") and self.params.cond:
                 self.cond_film = nn.ModuleList([
                     CondFiLM(32, 32, self.params.num_cond),
                     CondFiLM(128, 128, self.params.num_cond),
@@ -324,7 +324,7 @@ class WaveGrad(nn.Module):
                 FiLM(512, 512),
                 FiLM(512, 1024),
             ])
-            if self.params.cond:
+            if hasattr(self.params, "cond") and self.params.cond:
                 self.cond_film = nn.ModuleList([
                     CondFiLM(32, 32, self.params.num_cond),
                     CondFiLM(128, 128, self.params.num_cond),
@@ -366,7 +366,7 @@ class WaveGrad(nn.Module):
                 FiLM(512, 512),
                 FiLM(512, 1024),
             ])
-            if self.params.cond:
+            if hasattr(self.params, "cond") and self.params.cond:
                 self.cond_film = nn.ModuleList([
                     CondFiLM(32, 32, self.params.num_cond),
                     CondFiLM(128, 128, self.params.num_cond),
@@ -408,7 +408,7 @@ class WaveGrad(nn.Module):
                 FiLM(512, 512),
                 FiLM(512, 1024),
             ])
-            if self.params.cond:
+            if hasattr(self.params, "cond") and self.params.cond:
                 self.cond_film = nn.ModuleList([
                     CondFiLM(32, 32, self.params.num_cond),
                     CondFiLM(128, 128, self.params.num_cond),
@@ -512,7 +512,7 @@ class WaveGrad(nn.Module):
     def forward(self, audio, spectrogram, noise_scale, cond=None):
         x = audio.unsqueeze(1)
         downsampled = []
-        if cond is not None:
+        if cond is not None and hasattr(self.params, "cond") and self.params.cond:
             for film, cond_film, layer in zip(self.film, self.cond_film, self.downsample):
                 x = layer(x)
                 x = cond_film(x, cond)
