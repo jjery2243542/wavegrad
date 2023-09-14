@@ -1,0 +1,19 @@
+# Training params
+batch_size: 64
+valid_batch_size: 16
+learning_rate: 1.0e-4
+lr_scheduler: "cosine_w_warmup"
+max_grad_norm: 1.0
+
+# Data params
+sample_rate: 16000
+hop_samples: 640  # Don't change this. Really.
+crop_mel_frames: 24
+cond_norm: "ln"
+noise_schedule: "linear"
+normalize: True
+
+# Model params
+model_size: "xlarge2"
+av_model_size: "large"
+sample_probs: [0.333, 0.333, 0.334]
