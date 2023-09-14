@@ -84,13 +84,16 @@ class PathDataset(torch.utils.data.Dataset):
         }
 
 class NumpyFileDataset(torch.utils.data.Dataset):
-    def __init__(self, wav_file_list, npy_file_lists, wav_root_dir, feat_root_dir, cond_labels=None):
+    def __init__(self, wav_file_list, npy_file_lists, wav_root_dir, feat_root_dir, cond_labels=None, normalize=False):
         # npy_files in an order of a, v, av
         super().__init__()
 
         self.data = []
 
         self.cond_labels = cond_labels
+        self.normalize = normalize
+        print(f"normalize: {self.normalize}")
+
         if cond_labels is not None:
             with open(cond_labels) as f:
                 labels = [int(line.strip()) for line in f]
@@ -112,6 +115,9 @@ class NumpyFileDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         wav_path = self.data[idx]["wav"]
         signal, _ = torchaudio.load(wav_path)
+        if self.normalize:
+            m = torch.abs(signal).max()
+            signal = signal / m
 
         a_path = self.data[idx]["a"]
         v_path = self.data[idx]["v"]
@@ -239,8 +245,8 @@ def crop_features(params, features, audios, audio_starts, audio_size):
     audio = torch.stack(cropped["audio"], dim=0)
     return features, audio
 
-def from_file_lists(wav_file_list, npy_file_lists, params, wav_root_dir, feat_root_dir, cond_labels=None, is_distributed=False, is_valid=False):
-    dataset = NumpyFileDataset(wav_file_list, npy_file_lists, wav_root_dir, feat_root_dir, cond_labels=cond_labels)
+def from_file_lists(wav_file_list, npy_file_lists, params, wav_root_dir, feat_root_dir, cond_labels=None, is_distributed=False, is_valid=False, normalize=False):
+    dataset = NumpyFileDataset(wav_file_list, npy_file_lists, wav_root_dir, feat_root_dir, cond_labels=cond_labels, normalize=normalize)
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=params.batch_size if not is_valid else params.valid_batch_size,
@@ -249,7 +255,8 @@ def from_file_lists(wav_file_list, npy_file_lists, params, wav_root_dir, feat_ro
         sampler=DistributedSampler(dataset) if is_distributed else None,
         pin_memory=True,
         drop_last=True,
-        num_workers=os.cpu_count())
+        num_workers=min(os.cpu_count(), 10))
+        #num_workers=0)
 
 def from_path(data_dirs, spec_dir, params, is_distributed=False):
     dataset = NumpyDataset(data_dirs, spec_dir)

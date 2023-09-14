@@ -198,6 +198,7 @@ class WaveGradLearner:
         self.step = state_dict['step']
 
     def save_to_checkpoint(self, filename='weights', max_ckpts=5):
+        print("saving checkpoint...")
         save_basename = f'{filename}-{self.step}.pt'
         save_name = f'{self.model_dir}/{save_basename}'
         link_name = f'{self.model_dir}/{filename}.pt'
@@ -275,14 +276,15 @@ class WaveGradLearner:
 
                 #if torch.isnan(loss).any():
                 #    raise runtimeerror(f'detected nan loss at step {self.step}.')
+                #print(self.is_master, self.step)
                 if self.is_master:
-                    if self.step != 0 and self.step % 5000 == 0 or self.step == max_steps - 1:
+                    if self.step != 0 and self.step % 10000 == 0:
                         losses = {"train": loss}
                         for modal in ["a", "v", "av"]:
                             valid_loss = self.valid(dataset=self.valid_dataset, name=modal)
                             losses[f"valid_{modal}"] = valid_loss
                         self._write_summary(self.step, features, losses)
-                    if self.step % 5000 == 0 or self.step == max_steps - 1:
+                    if self.step == (max_steps - 1) or self.step % 10000 == 0:
                         self.save_to_checkpoint()
                 self.step += 1
 
@@ -384,12 +386,12 @@ def _train_impl(replica_id, model, train_dataset, valid_dataset, args, params):
 
 
 def train(args, params):
-    wav_dir = os.path.join(args.train_root_dir, "data")
-    feat_dir = os.path.join(args.train_root_dir, "features")
-    train_data_loader = dataset_from_lists(args.train_wav_file, args.train_npy_files, params, wav_dir, feat_dir, cond_labels=args.train_cond, is_distributed=False)
-    wav_dir = os.path.join(args.valid_root_dir, "data")
-    feat_dir = os.path.join(args.valid_root_dir, "features")
-    valid_data_loader = dataset_from_lists(args.valid_wav_file, args.valid_npy_files, params, wav_dir, feat_dir, cond_labels=args.valid_cond, is_valid=True, is_distributed=False)
+    wav_dir = os.path.join(args.train_root_dir, args.train_data_name)
+    feat_dir = os.path.join(args.train_root_dir, args.train_feat_name)
+    train_data_loader = dataset_from_lists(args.train_wav_file, args.train_npy_files, params, wav_dir, feat_dir, cond_labels=args.train_cond, is_distributed=False, normalize=params.normalize)
+    wav_dir = os.path.join(args.valid_root_dir, args.valid_data_name)
+    feat_dir = os.path.join(args.valid_root_dir, args.valid_feat_name)
+    valid_data_loader = dataset_from_lists(args.valid_wav_file, args.valid_npy_files, params, wav_dir, feat_dir, cond_labels=args.valid_cond, is_valid=True, is_distributed=False, normalize=params.normalize)
     model = WaveGrad(params).cuda()
     _train_impl(0, model, train_data_loader, valid_data_loader, args, params)
 
@@ -404,10 +406,10 @@ def train_distributed(replica_id, replica_count, port, args, params):
     model = WaveGrad(params).to(device)
     model = DistributedDataParallel(model, device_ids=[replica_id])
 
-    wav_dir = os.path.join(args.train_root_dir, "data")
-    feat_dir = os.path.join(args.train_root_dir, "features")
-    train_data_loader = dataset_from_lists(args.train_wav_file, args.train_npy_files, params, wav_dir, feat_dir, cond_labels=args.train_cond, is_distributed=True)
-    wav_dir = os.path.join(args.valid_root_dir, "data")
-    feat_dir = os.path.join(args.valid_root_dir, "features")
-    valid_data_loader = dataset_from_lists(args.valid_wav_file, args.valid_npy_files, params, wav_dir, feat_dir, cond_labels=args.valid_cond, is_distributed=False, is_valid=True)
+    wav_dir = os.path.join(args.train_root_dir, args.train_data_name)
+    feat_dir = os.path.join(args.train_root_dir, args.train_feat_name)
+    train_data_loader = dataset_from_lists(args.train_wav_file, args.train_npy_files, params, wav_dir, feat_dir, cond_labels=args.train_cond, is_distributed=True, normalize=params.normalize)
+    wav_dir = os.path.join(args.valid_root_dir, args.valid_data_name)
+    feat_dir = os.path.join(args.valid_root_dir, args.valid_feat_name)
+    valid_data_loader = dataset_from_lists(args.valid_wav_file, args.valid_npy_files, params, wav_dir, feat_dir, cond_labels=args.valid_cond, is_distributed=False, is_valid=True, normalize=params.normalize)
     _train_impl(replica_id, model, train_data_loader, valid_data_loader, args, params)

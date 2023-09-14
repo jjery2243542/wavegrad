@@ -71,6 +71,10 @@ if __name__ == '__main__':
     parser.add_argument('--valid_cond', default=None, help='valid condition')
     parser.add_argument('--train_root_dir', help="root_dir for training set")
     parser.add_argument('--valid_root_dir', help="root_dir for validation set")
+    parser.add_argument('--train_data_name', default="data", help="sub-directory for data")
+    parser.add_argument('--train_feat_name', default="features", help="sub-directory for feature")
+    parser.add_argument('--valid_data_name', default="data", help="sub-directory for data")
+    parser.add_argument('--valid_feat_name', default="features", help="sub-directory for feature")
     parser.add_argument('--max_steps', default=None, type=int,
         help='maximum number of training steps')
     parser.add_argument('--conf', default=None, help="the overide conf (.yaml)")

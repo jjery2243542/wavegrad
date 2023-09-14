@@ -56,6 +56,7 @@ params = AttrDict(
     num_cond=2,
     self_attn=False,
     num_heads=4, 
+    normalize=False,
 
     # Model params
     #noise_schedule=np.linspace(1e-6, 0.01, 1000).tolist(),
